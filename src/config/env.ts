@@ -82,6 +82,7 @@ export const env = {
     discordWebhookUrl: optional('NOTIFY_DISCORD_WEBHOOK_URL', ''),
     telegramBotToken: optional('NOTIFY_TELEGRAM_BOT_TOKEN', ''),
     telegramChatId: optional('NOTIFY_TELEGRAM_CHAT_ID', ''),
+    smsPhone: optional('NOTIFY_SMS_PHONE', ''),
   },
 
   logLevel: optional('LOG_LEVEL', 'info'),

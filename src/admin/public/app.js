@@ -104,6 +104,22 @@ async function loadDashboard() {
       <div class="cards">
         ${Object.entries(d.queue).map(([k, v]) => `<div class="card"><h4>${k}</h4><div class="value">${v}</div></div>`).join('')}
       </div>
+      <h3>Rendimiento por variante</h3>
+      <table>
+        <thead><tr><th>Variante</th><th>Contactos</th><th>Mensajes enviados</th><th>Respuestas</th><th>Tasa respuesta</th><th>Opt-outs</th></tr></thead>
+        <tbody>
+          ${Object.entries(d.variantStats).map(([variant, s]) => `
+            <tr>
+              <td><strong>${variant}</strong></td>
+              <td>${s.totalContacts}</td>
+              <td>${s.messagesSent}</td>
+              <td>${s.replies}</td>
+              <td>${s.replyRate !== null ? s.replyRate + '%' : '-'}</td>
+              <td>${s.optOuts}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
     `;
     document.getElementById('dashboard-go-activate')?.addEventListener('click', () => activateTab('contacts', { pushState: true }));
   } catch (err) {

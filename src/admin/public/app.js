@@ -132,6 +132,25 @@ const STAGE_LABELS = {
   NO_INTERESADO: 'Descartado',
 };
 const STAGE_ORDER = ['NUEVO_PROSPECTO', 'SMS_ENVIADO', 'RESPONDIO', 'REUNION_AGENDADA', 'NO_INTERESADO'];
+const STAGE_COLORS = {
+  NUEVO_PROSPECTO: '#2545b8',
+  SMS_ENVIADO: '#4338ca',
+  RESPONDIO: '#1a7a2e',
+  REUNION_AGENDADA: '#9a5b00',
+  NO_INTERESADO: '#a11414',
+};
+const AVATAR_PALETTE = ['#4f5bd5', '#e0637e', '#2fa88a', '#d68a2b', '#7a5cd6', '#2f9bd6'];
+function initialsOf(name) {
+  const parts = String(name || '?').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
+}
+function colorFor(name) {
+  const str = String(name || '');
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
+}
 
 let campaignsCache = null;
 async function getCampaignsCache() {
@@ -212,15 +231,24 @@ async function loadKanban() {
       const entries = data.columns[stage] || [];
       return `
         <div class="kanban-column" data-stage="${stage}">
-          <h4>${STAGE_LABELS[stage]} <span class="count">${entries.length}</span></h4>
+          <h4><span class="dot" style="background:${STAGE_COLORS[stage]}"></span>${STAGE_LABELS[stage]} <span class="count">${entries.length}</span></h4>
           <div class="kanban-cards" data-stage="${stage}">
-            ${entries.map((e) => `
+            ${entries.map((e) => {
+              const label = e.contact?.companyName || e.contact?.name || 'Sin nombre';
+              return `
               <div class="kanban-card" draggable="true" data-id="${e.id}">
-                <strong>${escapeHtml(e.contact?.companyName || e.contact?.name || 'Sin nombre')}</strong>
-                <div class="phone">${escapeHtml(e.contact?.phoneE164)}</div>
-                <div class="campaign">${escapeHtml(e.campaign?.name)}</div>
+                <div class="card-accent" style="background:${STAGE_COLORS[stage]}"></div>
+                <div class="card-body">
+                  <strong>${escapeHtml(label)}</strong>
+                  <div class="phone">${escapeHtml(e.contact?.phoneE164)}</div>
+                  <div class="card-footer">
+                    <span class="campaign">${escapeHtml(e.campaign?.name)}</span>
+                    <span class="avatar" style="background:${colorFor(label)}" title="${escapeHtml(label)}">${initialsOf(label)}</span>
+                  </div>
+                </div>
               </div>
-            `).join('')}
+            `;
+            }).join('')}
           </div>
         </div>
       `;

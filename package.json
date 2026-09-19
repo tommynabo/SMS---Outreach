@@ -18,8 +18,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "tsx prisma/seed.ts",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "DATABASE_URL=\"postgresql://sms_outreach:sms_outreach@localhost:5432/sms_outreach_test?schema=public\" vitest run",
+    "test:watch": "DATABASE_URL=\"postgresql://sms_outreach:sms_outreach@localhost:5432/sms_outreach_test?schema=public\" vitest",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

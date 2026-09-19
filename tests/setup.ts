@@ -5,4 +5,15 @@
 // are hoisted above all other statements in the file (including ones written
 // textually first), so config/env.ts (which reads process.env once at import time
 // and caches the result) would already have run with the old value.
-process.env.TEXTBEE_WEBHOOK_SECRET = process.env.TEXTBEE_WEBHOOK_SECRET || 'test-webhook-secret';
+import { assertLocalTestDatabase } from './dbSafety';
+
+// MUST run first, before any test file or Prisma client touches the DB. Protects
+// against an ambient/leaked DATABASE_URL (e.g. from a shell that sourced a prod
+// env file) silently pointing the destructive test suite at a real database.
+assertLocalTestDatabase(process.env.DATABASE_URL);
+
+// Always force a fixed value — must NOT fall back to whatever real secret is in
+// the developer's local .env (this repo's .env holds real TextBee credentials
+// for manual dry-run testing), or webhook signature tests become flaky/broken
+// depending on ambient environment state.
+process.env.TEXTBEE_WEBHOOK_SECRET = 'test-webhook-secret';

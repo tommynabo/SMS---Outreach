@@ -1,8 +1,10 @@
 import { prisma } from '../../src/db/client';
 import { DEFAULT_TEMPLATES } from '../../src/config/templates';
+import { assertLocalTestDatabase } from '../dbSafety';
 
 /** Wipes all outreach data between tests. Requires a disposable test database — never point this at production. */
 export async function resetDatabase(): Promise<void> {
+  assertLocalTestDatabase(process.env.DATABASE_URL);
   await prisma.$transaction([
     prisma.auditLog.deleteMany(),
     prisma.notification.deleteMany(),

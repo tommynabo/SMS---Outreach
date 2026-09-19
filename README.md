@@ -265,6 +265,7 @@ La app corre de forma nativa en Docker (sección 15). Si prefieres Vercel (grati
 
 - `api/index.ts` envuelve el mismo Fastify app (`src/api/server.ts`) como una función serverless. `vercel.json` reescribe **todas** las rutas hacia ella: `/admin` (panel), `/admin/api/*`, `/webhooks/textbee` y `/cron/tick`.
 - El proceso worker (`src/worker/index.ts`, bucle infinito con `setInterval`) **no puede correr en Vercel** (las funciones serverless no persisten entre peticiones). En su lugar, `/cron/tick` ejecuta una iteración puntual de scheduler + reconciliación + detección de stalled bajo demanda. Lo dispara un cron **externo** (ver sección 20) — así no necesitas Vercel Cron ni un servidor propio para el worker.
+- `vercel.json` fija `"buildCommand": null` y `"outputDirectory": "public"`, y existe un `public/index.html` mínimo committeado. Esto es deliberado: Vercel, al no detectar un framework, siempre exige un directorio de salida estático (por defecto `public`) aunque el proyecto solo tenga funciones serverless; sin esto el deploy falla con "No Output Directory named 'public' found". Ese `public/index.html` nunca se sirve en la práctica (el rewrite catch-all lo intercepta), solo existe para satisfacer ese requisito. `npm run build` (tsc) sigue existiendo para Docker/local, pero Vercel ya no lo ejecuta.
 
 ### 19.2 Base de datos
 
@@ -279,8 +280,10 @@ Vercel no incluye Postgres. Necesitas una instancia gestionada accesible por int
    DATABASE_URL="<tu-connection-string-de-produccion>" npx prisma migrate deploy
    DATABASE_URL="<tu-connection-string-de-produccion>" npm run prisma:seed
    ```
-4. Despliega (push a `main` o `vercel --prod`). El `postinstall` de `package.json` ejecuta `prisma generate` automáticamente tras el `npm install` de Vercel (no uses `buildCommand` en `vercel.json` para esto — con un framework "Other" detectado, un `buildCommand` personalizado hace que Vercel espere un directorio de salida estático tipo `public/` y falle con "No Output Directory named public").
+4. Despliega (push a `main` o `vercel --prod`). El `postinstall` de `package.json` ejecuta `prisma generate` automáticamente durante el `npm install` de Vercel; no hace falta ningún build command.
 5. Verifica: `https://TU-PROYECTO.vercel.app/health` debe responder `{"status":"ok"}`, y `https://TU-PROYECTO.vercel.app/admin` debe pedir usuario/contraseña.
+
+`package.json` fija `"engines": {"node": "24.x"}` porque Vercel deprecó Node 20 (deja de soportarse a partir de 2026-10-01). El `Dockerfile` (despliegue en tu propio servidor) sigue en `node:20-bookworm-slim` de forma independiente — puedes subirlo cuando quieras, no es urgente para ese camino.
 
 ### 19.4 Webhook de TextBee en Vercel
 

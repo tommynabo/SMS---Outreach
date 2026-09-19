@@ -1,5 +1,7 @@
 {
   "version": 2,
+  "buildCommand": null,
+  "outputDirectory": "public",
   "functions": {
     "api/index.ts": {
       "includeFiles": "src/admin/public/**",

@@ -68,6 +68,9 @@ export function buildServer() {
   );
 
   app.get('/', async (_req, reply) => reply.redirect('/admin/'));
+  // fastify-static only serves under the exact /admin/ prefix; redirect the
+  // no-trailing-slash form so visitors don't hit a raw 404.
+  app.get('/admin', async (_req, reply) => reply.redirect('/admin/'));
 
   return app;
 }

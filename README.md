@@ -279,7 +279,7 @@ Vercel no incluye Postgres. Necesitas una instancia gestionada accesible por int
    DATABASE_URL="<tu-connection-string-de-produccion>" npx prisma migrate deploy
    DATABASE_URL="<tu-connection-string-de-produccion>" npm run prisma:seed
    ```
-4. Despliega (push a `main` o `vercel --prod`). Vercel ejecuta `npx prisma generate` (ver `buildCommand` en `vercel.json`) antes de construir la función.
+4. Despliega (push a `main` o `vercel --prod`). El `postinstall` de `package.json` ejecuta `prisma generate` automáticamente tras el `npm install` de Vercel (no uses `buildCommand` en `vercel.json` para esto — con un framework "Other" detectado, un `buildCommand` personalizado hace que Vercel espere un directorio de salida estático tipo `public/` y falle con "No Output Directory named public").
 5. Verifica: `https://TU-PROYECTO.vercel.app/health` debe responder `{"status":"ok"}`, y `https://TU-PROYECTO.vercel.app/admin` debe pedir usuario/contraseña.
 
 ### 19.4 Webhook de TextBee en Vercel

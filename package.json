@@ -4,10 +4,14 @@
   "private": true,
   "description": "Real, deployable SMS outreach application replacing GoHighLevel workflow, powered by TextBee.",
   "type": "commonjs",
+  "engines": {
+    "node": "20.x"
+  },
   "scripts": {
     "dev:api": "tsx watch src/api/server.ts",
     "dev:worker": "tsx watch src/worker/index.ts",
     "build": "tsc -p tsconfig.build.json",
+    "postinstall": "prisma generate",
     "start:api": "node dist/api/server.js",
     "start:worker": "node dist/worker/index.js",
     "prisma:generate": "prisma generate",

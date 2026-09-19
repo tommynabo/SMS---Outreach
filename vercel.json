@@ -1,7 +1,5 @@
 {
   "version": 2,
-  "buildCommand": "npx prisma generate",
-  "installCommand": "npm install",
   "functions": {
     "api/index.ts": {
       "includeFiles": "src/admin/public/**",

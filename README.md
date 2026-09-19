@@ -57,9 +57,10 @@ src/
   db/             cliente Prisma singleton
   lib/            teléfono (E.164), horario/timezone, opt-out matcher, render de plantillas
   config/         env, plantillas por defecto
-  admin/public/   panel de administración (HTML/JS estático): dashboard, importar leads,
-                  contacts, oportunidades, kanban, queue, campaigns, settings,
-                  notifications, execution log
+  admin/public/   panel de administración (HTML/JS estático, con URLs propias por pestaña):
+                  dashboard, importar leads, contacts, kanban, queue, campaigns,
+                  mensajes (plantillas + drip dinámico), settings, notifications,
+                  execution log
 api/index.ts      entrypoint serverless para Vercel (envuelve el mismo Fastify app)
 vercel.json       configuración de despliegue en Vercel
 prisma/           schema.prisma, seed.ts
@@ -189,12 +190,18 @@ Contact Name,Phone,Company Name,City,Website,Category,Rating,Reviews Count,About
 
 - Los teléfonos se normalizan automáticamente a E.164 (`612345678`, `34612345678` y `+34612345678` → `+34612345678`).
 - Deduplica por `phone_e164`. Reimportar el mismo CSV **actualiza** datos no destructivos pero **nunca** borra: historial de respuestas, `do_not_contact_sms`, estado de outreach, mensajes ni tags de outreach existentes.
+- **Auto-activación**: cada contacto importado (nuevo o actualizado) recibe automáticamente el tag `outreach-ready` y se intenta inscribir en la campaña activa (la más antigua con `active=true`). Si la inscripción tiene éxito, el contacto aparece de inmediato en el Kanban en la columna **Nuevo prospecto** y se le crea su acción `INITIAL` pendiente de envío. Si no hay ninguna campaña activa, el import se completa igual pero el reporte indica `noActiveCampaign: true` y no se crea ninguna acción — actívala primero desde **Campaigns**.
+- **Variables personalizadas**: cualquier columna del CSV que no sea una de las columnas fijas conocidas (`Contact Name`, `Phone`, `Company Name`, etc.) se guarda tal cual en `contacts.custom_fields` (nombre normalizado: minúsculas, sin acentos, espacios/símbolos → `_`) y queda disponible como variable `{{nombre_columna}}` en cualquier plantilla de mensaje, junto a las variables fijas (`company_name`, `name`, `source_query`, `rating`, `reviews_count`, `city`). Las variables detectadas en los CSVs importados se listan en la pestaña **Mensajes**.
 
 ## 12. Crear y activar una campaña
 
 Panel → **Campaigns** → crear con un nombre. Se crea inactiva; pulsa **Activate**. Los valores de horario/pacing/cap se pueden editar directamente en base de datos o (próximamente) desde el panel de settings avanzado; por defecto se seedán con los valores de `.env`.
 
-Para inscribir contactos: en **Contacts**, marca los contactos elegibles (con tag `outreach-ready`, sin DNC, sin `outreach-stop`/`outreach-replied`) y aplica la acción bulk **Enroll campaign** con el `campaignId`.
+Mientras haya una campaña activa, cada contacto importado por CSV se inscribe automáticamente (ver [sección 11](#11-importar-contactos-por-csv)) — normalmente no hace falta inscribir contactos a mano. Para casos puntuales: en **Contacts**, marca los contactos elegibles (con tag `outreach-ready`, sin DNC, sin `outreach-stop`/`outreach-replied`) y aplica la acción bulk **Enroll campaign** con el `campaignId`.
+
+### Secuencia de follow-ups (drip) dinámica
+
+Por defecto toda campaña tiene 3 pasos: mensaje inicial + 2 follow-ups (`FOLLOWUP_1`, `FOLLOWUP_2`), con el retraso de cada uno configurable por campaña. Desde el panel → **Mensajes** puedes **añadir hasta 3 pasos más** (`FOLLOWUP_3`, `FOLLOWUP_4`, `FOLLOWUP_5`): al "activar" un paso nuevo defines su retraso (en horas desde el paso anterior) y el texto de sus 3 variantes (A/B/C) en un único formulario — en cuanto lo guardas, la secuencia se extiende automáticamente para todos los contactos que la vayan alcanzando, sin tocar código. Los pasos deben activarse/desactivarse en orden (no puedes activar `FOLLOWUP_4` sin `FOLLOWUP_3` activo, ni desactivar `FOLLOWUP_3` mientras `FOLLOWUP_4` siga activo). Un contacto que llega al último paso activado sin haber respondido se marca automáticamente como `COMPLETED`.
 
 ## 13. Pausar / reanudar el envío global
 
@@ -312,11 +319,13 @@ Llamar a este endpoint más a menudo, más despacio, o dos veces en paralelo nun
 - **Dashboard**: estado global (pausado/activo), dry-run, contadores del día, cola pendiente por tipo de acción, resumen de contactos.
 - **Importar Leads**: sube el CSV de prospección (mismo motor que la sección 11).
 - **Contacts**: listado/búsqueda de contactos, acciones bulk (marcar `outreach-ready`, enroll en campaña, pausar, cancelar secuencia).
-- **Oportunidades**: vista de tabla de cada contacto-en-campaña (`pipeline_entries`) con su etapa actual, filtrable por campaña/etapa/búsqueda; permite mover de etapa manualmente.
-- **Kanban**: tablero estilo GoHighLevel con arrastrar-y-soltar entre 5 columnas — *Nuevo prospecto* → *Enviado* → *Respondido* → *Llamada agendada* / *Descartado*. Las tres primeras las mueve el sistema automáticamente (enrollment, envío confirmado, respuesta entrante); *Llamada agendada* y *Descartado* también se pueden fijar a mano arrastrando la tarjeta.
+- **Kanban**: tablero estilo GoHighLevel con arrastrar-y-soltar entre 5 columnas — *Nuevo prospecto* → *Enviado* → *Respondido* → *Llamada agendada* / *Descartado*. Las tres primeras las mueve el sistema automáticamente (enrollment, envío confirmado, respuesta entrante); *Llamada agendada* y *Descartado* también se pueden fijar a mano arrastrando la tarjeta. Los contactos importados por CSV con campaña activa aparecen aquí de inmediato en *Nuevo prospecto*.
 - **Queue**: cola global de envíos (`outreach_actions`) con cancelar/reintentar/reprogramar.
 - **Campaigns**: alta y activación/desactivación de campañas.
-- **Settings**: pausa/reanuda global, envío de SMS de prueba, edición de plantillas de mensaje.
+- **Mensajes**: gestión de las plantillas de cada paso de la secuencia (mensaje inicial + hasta 5 follow-ups), variables disponibles (fijas + personalizadas detectadas en tus CSVs) y activación/desactivación de pasos adicionales del drip (ver [sección 12](#12-crear-y-activar-una-campaña)).
+- **Settings**: pausa/reanuda global, envío de SMS de prueba.
 - **Notifications**: alertas accionables (respuestas nuevas, opt-outs, fallos, stalled, circuit breaker, errores de TextBee).
 - **Execution Log**: histórico completo de `audit_log` (cada envío solicitado/aceptado/enviado/fallido, cada respuesta entrante, cada cambio manual, pausas/reanudaciones, importaciones CSV...), filtrable por tipo de evento — la forma más rápida de verificar que todo el sistema está funcionando correctamente.
+
+Cada pestaña tiene su propia URL (p. ej. `/admin/mensajes`, `/admin/contactos`, `/admin/kanban`), navegable directamente o con el botón atrás/adelante del navegador.
 

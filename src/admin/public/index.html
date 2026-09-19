@@ -13,10 +13,10 @@
       <button data-tab="dashboard" class="tab-btn active">Dashboard</button>
       <button data-tab="leads" class="tab-btn">Importar Leads</button>
       <button data-tab="contacts" class="tab-btn">Contacts</button>
-      <button data-tab="opportunities" class="tab-btn">Oportunidades</button>
       <button data-tab="kanban" class="tab-btn">Kanban</button>
       <button data-tab="queue" class="tab-btn">Queue</button>
       <button data-tab="campaigns" class="tab-btn">Campaigns</button>
+      <button data-tab="templates" class="tab-btn">Mensajes</button>
       <button data-tab="settings" class="tab-btn">Settings</button>
       <button data-tab="notifications" class="tab-btn">Notifications</button>
       <button data-tab="execution-log" class="tab-btn">Execution Log</button>
@@ -30,10 +30,14 @@
 
     <section id="tab-leads" class="tab-panel">
       <h3>Importar Leads (CSV)</h3>
-      <p>Sube el CSV de prospección (Google Maps scraping, GHL export, etc). Los teléfonos se normalizan a E.164 y se deduplican automáticamente — reimportar el mismo archivo nunca borra historial ni respuestas.</p>
+      <p>Sube el CSV de prospección (Google Maps scraping, GHL export, etc). Los teléfonos se normalizan a E.164 y se deduplican automáticamente — reimportar el mismo archivo nunca borra historial ni respuestas. Cada contacto importado se activa automáticamente y aparece en el Kanban como "Nuevo prospecto".</p>
       <input type="file" id="csv-file" accept=".csv" />
       <button id="csv-upload">Importar</button>
-      <pre id="csv-report"></pre>
+      <div id="csv-progress" class="csv-progress hidden">
+        <div class="spinner"></div>
+        <span id="csv-progress-text">Importando contactos…</span>
+      </div>
+      <div id="csv-report"></div>
     </section>
 
     <section id="tab-contacts" class="tab-panel">
@@ -62,23 +66,6 @@
         <button id="bulk-apply">Aplicar a seleccionados</button>
       </div>
       <div id="contacts-table"></div>
-    </section>
-
-    <section id="tab-opportunities" class="tab-panel">
-      <div class="toolbar">
-        <select id="opp-campaign-filter"><option value="">Todas las campañas</option></select>
-        <select id="opp-stage-filter">
-          <option value="">Todas las etapas</option>
-          <option value="NUEVO_PROSPECTO">Nuevo prospecto</option>
-          <option value="SMS_ENVIADO">Enviado</option>
-          <option value="RESPONDIO">Respondido</option>
-          <option value="REUNION_AGENDADA">Llamada agendada</option>
-          <option value="NO_INTERESADO">Descartado</option>
-        </select>
-        <input id="opp-search" placeholder="Buscar por empresa o teléfono" />
-        <button id="opp-refresh">Buscar</button>
-      </div>
-      <div id="opportunities-table"></div>
     </section>
 
     <section id="tab-kanban" class="tab-panel">
@@ -115,6 +102,10 @@
         <input id="new-campaign-name" placeholder="Nombre de campaña" />
         <button id="new-campaign-create">Crear</button>
       </div>
+    </section>
+
+    <section id="tab-templates" class="tab-panel">
+      <div id="templates-content">Loading...</div>
     </section>
 
     <section id="tab-settings" class="tab-panel">

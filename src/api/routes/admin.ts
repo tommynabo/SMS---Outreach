@@ -8,6 +8,7 @@ import { registerCsvRoutes } from './admin/csv';
 import { registerNotificationsRoutes } from './admin/notifications';
 import { registerPipelineRoutes } from './admin/pipeline';
 import { registerExecutionLogRoutes } from './admin/executionLog';
+import { registerTemplatesRoutes } from './admin/templates';
 
 export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   await app.register(registerDashboardRoutes);
@@ -19,4 +20,5 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   await app.register(registerNotificationsRoutes);
   await app.register(registerPipelineRoutes);
   await app.register(registerExecutionLogRoutes);
+  await app.register(registerTemplatesRoutes);
 }

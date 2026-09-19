@@ -7,13 +7,10 @@ import { textBeeClient } from '../../../textbee/client';
 import { normalizePhoneToE164 } from '../../../lib/phone';
 import { writeAuditLog } from '../../../services/auditLog';
 
-const templateUpdateSchema = z.object({ body: z.string().min(1) });
-
 const testSmsSchema = z.object({ phone: z.string(), message: z.string().min(1) });
 
 export async function registerSettingsRoutes(app: FastifyInstance): Promise<void> {
   app.get('/settings', async () => {
-    const templates = await prisma.messageTemplate.findMany({ orderBy: [{ actionType: 'asc' }, { variant: 'asc' }] });
     const runtime = await getRuntimeState();
     return {
       env: {
@@ -29,23 +26,7 @@ export async function registerSettingsRoutes(app: FastifyInstance): Promise<void
         environment: env.environment,
       },
       runtime,
-      templates,
     };
-  });
-
-  app.put<{ Params: { actionType: string; variant: string } }>('/settings/templates/:actionType/:variant', async (request, reply) => {
-    const body = templateUpdateSchema.parse(request.body);
-    const { actionType, variant } = request.params;
-    try {
-      const updated = await prisma.messageTemplate.update({
-        where: { actionType_variant: { actionType: actionType as never, variant: variant as never } },
-        data: { body: body.body },
-      });
-      await writeAuditLog('MANUAL_STAGE_CHANGE', { actor: 'admin', details: { action: 'template-updated', actionType, variant } });
-      return updated;
-    } catch {
-      return reply.code(404).send({ error: 'template not found' });
-    }
   });
 
   app.post('/pause', async (request) => {

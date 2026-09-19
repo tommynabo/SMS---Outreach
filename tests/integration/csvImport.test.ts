@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { prisma } from '../../src/db/client';
-import { resetDatabase } from './helpers';
+import { resetDatabase, seedTemplates, createTestCampaign } from './helpers';
 import { importContactsFromCsv } from '../../src/services/csvImport';
 
 beforeEach(async () => {
@@ -58,5 +58,42 @@ describe('importContactsFromCsv', () => {
     const report = await importContactsFromCsv(csv);
     expect(report.created).toBe(0);
     expect(report.skipped).toHaveLength(1);
+  });
+
+  it('auto-enrolls newly imported contacts into the active campaign (Kanban "Nuevo prospecto")', async () => {
+    await seedTemplates();
+    const campaign = await createTestCampaign();
+    const csv = `${CSV_HEADER}\nJuan,612345678,Acme SL,Madrid,,,,,,,,,,,,,gmaps,`;
+
+    const report = await importContactsFromCsv(csv);
+    expect(report.enrolled).toBe(1);
+    expect(report.noActiveCampaign).toBe(false);
+
+    const contact = await prisma.contact.findUniqueOrThrow({ where: { phoneE164: '+34612345678' } });
+    expect(contact.outreachStatus).toBe('ACTIVE');
+
+    const pipelineEntry = await prisma.pipelineEntry.findUnique({
+      where: { contactId_campaignId: { contactId: contact.id, campaignId: campaign.id } },
+    });
+    expect(pipelineEntry?.stage).toBe('NUEVO_PROSPECTO');
+
+    const initialAction = await prisma.outreachAction.findFirst({ where: { contactId: contact.id, actionType: 'INITIAL' } });
+    expect(initialAction).not.toBeNull();
+  });
+
+  it('reports noActiveCampaign and still imports contacts when there is no active campaign', async () => {
+    const csv = `${CSV_HEADER}\nJuan,612345678,Acme SL,Madrid,,,,,,,,,,,,,gmaps,`;
+    const report = await importContactsFromCsv(csv);
+    expect(report.created).toBe(1);
+    expect(report.enrolled).toBe(0);
+    expect(report.noActiveCampaign).toBe(true);
+  });
+
+  it('captures unmapped CSV columns as customFields usable as template variables', async () => {
+    const header = `${CSV_HEADER},Google Reviews Text`;
+    const csv = `${header}\nJuan,612345678,Acme SL,Madrid,,,,,,,,,,,,,gmaps,,"Great service!"`;
+    await importContactsFromCsv(csv);
+    const contact = await prisma.contact.findUniqueOrThrow({ where: { phoneE164: '+34612345678' } });
+    expect(contact.customFields).toEqual({ google_reviews_text: 'Great service!' });
   });
 });

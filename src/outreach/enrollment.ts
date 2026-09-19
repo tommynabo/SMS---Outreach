@@ -1,6 +1,6 @@
 import { ActionType, OutreachStatus, Prisma } from '@prisma/client';
 import { prisma } from '../db/client';
-import { renderTemplate } from '../lib/render';
+import { renderTemplate, buildTemplateContext } from '../lib/render';
 import { isValidE164 } from '../lib/phone';
 import { pickRandomVariant } from './variants';
 import { addTag, hasTag } from '../services/tags';
@@ -50,14 +50,17 @@ export async function enrollContactInCampaign(contactId: string, campaignId: str
       throw new Error(`Missing INITIAL message template for variant ${variant}`);
     }
 
-    const renderedMessage = renderTemplate(template.body, {
-      company_name: contact.companyName,
-      name: contact.name,
-      source_query: contact.sourceQuery,
-      rating: contact.rating,
-      reviews_count: contact.reviewsCount,
-      city: contact.city,
-    });
+    const renderedMessage = renderTemplate(
+      template.body,
+      buildTemplateContext(contact.customFields, {
+        company_name: contact.companyName,
+        name: contact.name,
+        source_query: contact.sourceQuery,
+        rating: contact.rating,
+        reviews_count: contact.reviewsCount,
+        city: contact.city,
+      }),
+    );
 
     await tx.contact.update({
       where: { id: contactId },

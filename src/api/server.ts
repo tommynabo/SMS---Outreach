@@ -3,6 +3,7 @@ import fastifyCors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import fastifyBasicAuth from '@fastify/basic-auth';
 import path from 'node:path';
+import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { env } from '../config/env';
 import { logger } from '../lib/logger';
@@ -16,6 +17,9 @@ declare module 'fastify' {
     rawBody?: Buffer;
   }
 }
+
+const adminPublicDir = path.join(__dirname, '..', 'admin', 'public');
+const adminIndexHtml = fs.readFileSync(path.join(adminPublicDir, 'index.html'), 'utf8');
 
 export function buildServer() {
   const app = Fastify({ logger });
@@ -59,9 +63,18 @@ export function buildServer() {
       adminApp.addHook('onRequest', adminApp.basicAuth);
       void adminApp.register(registerAdminRoutes, { prefix: '/api' });
       void adminApp.register(fastifyStatic, {
-        root: path.join(__dirname, '..', 'admin', 'public'),
+        root: adminPublicDir,
         prefix: '/',
         decorateReply: false,
+      });
+      // SPA fallback: real, bookmarkable sub-routes (e.g. /admin/importar-leads,
+      // /admin/contactos) are all client-side tabs in the same single-page app —
+      // serve index.html for any unmatched GET under /admin that isn't an API call.
+      adminApp.setNotFoundHandler((request, reply) => {
+        if (request.method !== 'GET' || request.url.startsWith('/admin/api/')) {
+          return reply.code(404).send({ error: 'not found' });
+        }
+        return reply.type('text/html').send(adminIndexHtml);
       });
     },
     { prefix: '/admin' },

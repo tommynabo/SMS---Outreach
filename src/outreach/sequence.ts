@@ -1,20 +1,55 @@
-import { ActionStatus, ActionType, OutreachStatus, PipelineStage, Prisma } from '@prisma/client';
+import { ActionStatus, ActionType, Campaign, OutreachStatus, PipelineStage, Prisma } from '@prisma/client';
 import { prisma } from '../db/client';
 import { env } from '../config/env';
-import { renderTemplate } from '../lib/render';
+import { renderTemplate, buildTemplateContext } from '../lib/render';
 import { addTag, removeTag, hasTag } from '../services/tags';
 import { setPipelineStage } from '../services/pipeline';
 import { writeAuditLog } from '../services/auditLog';
 
-const NEXT_ACTION: Partial<Record<ActionType, ActionType>> = {
-  [ActionType.INITIAL]: ActionType.FOLLOWUP_1,
-  [ActionType.FOLLOWUP_1]: ActionType.FOLLOWUP_2,
+/**
+ * Fixed step order for the drip sequence. A campaign "activates" a step past
+ * FOLLOWUP_2 by setting its delay field (non-null) on the Campaign row — see
+ * `delayHoursForStep`. Adding a MessageTemplate for a step alone does not
+ * enable it; the admin "Mensajes" page sets both together.
+ */
+export const SEQUENCE_ORDER: ActionType[] = [
+  ActionType.INITIAL,
+  ActionType.FOLLOWUP_1,
+  ActionType.FOLLOWUP_2,
+  ActionType.FOLLOWUP_3,
+  ActionType.FOLLOWUP_4,
+  ActionType.FOLLOWUP_5,
+];
+
+const OUTREACH_STATUS_FOR_STEP: Partial<Record<ActionType, OutreachStatus>> = {
+  [ActionType.FOLLOWUP_1]: OutreachStatus.FOLLOWUP_1_SENT,
+  [ActionType.FOLLOWUP_2]: OutreachStatus.FOLLOWUP_2_SENT,
 };
 
-const DELAY_HOURS: Partial<Record<ActionType, number>> = {
-  [ActionType.FOLLOWUP_1]: env.followup1DelayHours,
-  [ActionType.FOLLOWUP_2]: env.followup2DelayHours,
-};
+/** Returns the next step in the fixed order, or undefined if `current` is the last possible step. */
+export function nextStepInSequence(current: ActionType): ActionType | undefined {
+  const idx = SEQUENCE_ORDER.indexOf(current);
+  if (idx === -1 || idx === SEQUENCE_ORDER.length - 1) return undefined;
+  return SEQUENCE_ORDER[idx + 1];
+}
+
+/** Delay (hours after the previous step's send time) for a given step on a campaign, or null if disabled. */
+export function delayHoursForStep(campaign: Campaign, actionType: ActionType): number | null {
+  switch (actionType) {
+    case ActionType.FOLLOWUP_1:
+      return campaign.followup1DelayHours ?? env.followup1DelayHours;
+    case ActionType.FOLLOWUP_2:
+      return campaign.followup2DelayHours ?? env.followup2DelayHours;
+    case ActionType.FOLLOWUP_3:
+      return campaign.followup3DelayHours ?? null;
+    case ActionType.FOLLOWUP_4:
+      return campaign.followup4DelayHours ?? null;
+    case ActionType.FOLLOWUP_5:
+      return campaign.followup5DelayHours ?? null;
+    default:
+      return null;
+  }
+}
 
 /**
  * Called once an outreach_action is CONFIRMED sent (webhook MESSAGE_SENT or
@@ -47,32 +82,33 @@ export async function onActionConfirmedSent(actionId: string, sentAt: Date): Pro
         data: { outreachStatus: OutreachStatus.INITIAL_SENT },
       });
       await setPipelineStage(contact.id, action.campaignId, PipelineStage.SMS_ENVIADO, tx);
-    } else if (action.actionType === ActionType.FOLLOWUP_1) {
+    } else {
+      const status = OUTREACH_STATUS_FOR_STEP[action.actionType];
+      if (status) {
+        await tx.contact.update({ where: { id: contact.id }, data: { outreachStatus: status } });
+      }
+    }
+
+    const nextType = nextStepInSequence(action.actionType);
+    const campaign = nextType ? await tx.campaign.findUnique({ where: { id: action.campaignId } }) : null;
+    const delayHours = nextType && campaign ? delayHoursForStep(campaign, nextType) : null;
+
+    if (!nextType || delayHours === null) {
+      // No further step configured for this campaign — sequence complete.
       await tx.contact.update({
         where: { id: contact.id },
-        data: { outreachStatus: OutreachStatus.FOLLOWUP_1_SENT },
-      });
-    } else if (action.actionType === ActionType.FOLLOWUP_2) {
-      await tx.contact.update({
-        where: { id: contact.id },
-        data: {
-          outreachStatus: OutreachStatus.COMPLETED,
-          sequenceCompletedAt: new Date(),
-        },
+        data: { outreachStatus: OutreachStatus.COMPLETED, sequenceCompletedAt: new Date() },
       });
       await removeTag(contact.id, 'outreach-active', tx);
       await addTag(contact.id, 'outreach-completed', tx);
       await writeAuditLog('SEQUENCE_CANCELLED', {
         contactId: contact.id,
         campaignId: action.campaignId,
-        details: { reason: 'sequence-completed-normally' },
+        details: { reason: 'sequence-completed-normally', lastActionType: action.actionType },
         tx,
       });
-      return; // no further follow-up after FOLLOWUP_2
+      return;
     }
-
-    const nextType = NEXT_ACTION[action.actionType];
-    if (!nextType) return;
 
     const stopped = await hasTag(contact.id, 'outreach-stop', tx);
     const replied = await hasTag(contact.id, 'outreach-replied', tx);
@@ -85,16 +121,18 @@ export async function onActionConfirmedSent(actionId: string, sentAt: Date): Pro
       throw new Error(`Missing ${nextType} message template for variant ${contact.outreachVariant}`);
     }
 
-    const renderedMessage = renderTemplate(template.body, {
-      company_name: contact.companyName,
-      name: contact.name,
-      source_query: contact.sourceQuery,
-      rating: contact.rating,
-      reviews_count: contact.reviewsCount,
-      city: contact.city,
-    });
+    const renderedMessage = renderTemplate(
+      template.body,
+      buildTemplateContext(contact.customFields, {
+        company_name: contact.companyName,
+        name: contact.name,
+        source_query: contact.sourceQuery,
+        rating: contact.rating,
+        reviews_count: contact.reviewsCount,
+        city: contact.city,
+      }),
+    );
 
-    const delayHours = DELAY_HOURS[nextType] ?? 48;
     const scheduledFor = new Date(sentAt.getTime() + delayHours * 60 * 60 * 1000);
 
     try {

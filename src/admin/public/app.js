@@ -16,24 +16,51 @@ function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-// ---------- Tabs ----------
+// ---------- Tabs & URL routing ----------
+// Each tab has a distinct, bookmarkable /admin/<slug> URL. Dashboard is the root (/admin/).
+const TAB_SLUGS = {
+  dashboard: '',
+  leads: 'importar-leads',
+  contacts: 'contactos',
+  kanban: 'kanban',
+  queue: 'queue',
+  campaigns: 'campanas',
+  templates: 'mensajes',
+  settings: 'ajustes',
+  notifications: 'notificaciones',
+  'execution-log': 'registro',
+};
+const SLUG_TO_TAB = Object.fromEntries(Object.entries(TAB_SLUGS).map(([tab, slug]) => [slug, tab]));
+
+function activateTab(tab, { pushState = false } = {}) {
+  if (!document.getElementById('tab-' + tab)) tab = 'dashboard';
+  document.querySelectorAll('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.tab-panel').forEach((p) => p.classList.toggle('active', p.id === 'tab-' + tab));
+  if (pushState) {
+    const slug = TAB_SLUGS[tab] ?? '';
+    history.pushState({ tab }, '', '/admin/' + slug);
+  }
+  loadTab(tab);
+}
+
+function tabFromLocation() {
+  const slug = location.pathname.replace(/^\/admin\/?/, '').replace(/\/$/, '');
+  return SLUG_TO_TAB[slug] || 'dashboard';
+}
+
 document.querySelectorAll('.tab-btn').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-    loadTab(btn.dataset.tab);
-  });
+  btn.addEventListener('click', () => activateTab(btn.dataset.tab, { pushState: true }));
 });
+
+window.addEventListener('popstate', () => activateTab(tabFromLocation()));
 
 function loadTab(tab) {
   if (tab === 'dashboard') loadDashboard();
   if (tab === 'contacts') loadContacts();
-  if (tab === 'opportunities') loadOpportunities();
   if (tab === 'kanban') loadKanban();
   if (tab === 'queue') loadQueue();
   if (tab === 'campaigns') loadCampaigns();
+  if (tab === 'templates') loadTemplates();
   if (tab === 'settings') loadSettings();
   if (tab === 'notifications') loadNotifications();
   if (tab === 'execution-log') loadExecutionLog();
@@ -123,7 +150,7 @@ document.getElementById('bulk-apply').addEventListener('click', async () => {
   }
 });
 
-// ---------- Opportunities & Kanban shared helpers ----------
+// ---------- Kanban shared helpers ----------
 const STAGE_LABELS = {
   NUEVO_PROSPECTO: 'Nuevo prospecto',
   SMS_ENVIADO: 'Enviado',
@@ -164,59 +191,6 @@ async function populateCampaignFilter(selectEl) {
   selectEl.innerHTML = '<option value="">Todas las campañas</option>' + campaigns.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
   selectEl.value = current;
 }
-
-// ---------- Opportunities ----------
-async function loadOpportunities() {
-  const el = document.getElementById('opportunities-table');
-  await populateCampaignFilter(document.getElementById('opp-campaign-filter'));
-  const campaignId = document.getElementById('opp-campaign-filter').value;
-  const stage = document.getElementById('opp-stage-filter').value;
-  const search = document.getElementById('opp-search').value;
-  const params = new URLSearchParams();
-  if (campaignId) params.set('campaignId', campaignId);
-  if (stage) params.set('stage', stage);
-  if (search) params.set('search', search);
-  try {
-    const data = await api('/pipeline?' + params.toString());
-    el.innerHTML = `
-      <table>
-        <thead><tr><th>Company</th><th>Phone</th><th>Campaign</th><th>Stage</th><th>Last outbound</th><th>Last inbound</th><th>Actions</th></tr></thead>
-        <tbody>
-          ${data.items.map((e) => `
-            <tr>
-              <td>${escapeHtml(e.contact?.companyName)}</td>
-              <td>${escapeHtml(e.contact?.phoneE164)}</td>
-              <td>${escapeHtml(e.campaign?.name)}</td>
-              <td><span class="badge STAGE_${e.stage}">${STAGE_LABELS[e.stage] || e.stage}</span></td>
-              <td>${e.contact?.lastOutboundAt ? new Date(e.contact.lastOutboundAt).toLocaleString() : ''}</td>
-              <td>${e.contact?.lastInboundAt ? new Date(e.contact.lastInboundAt).toLocaleString() : ''}</td>
-              <td>
-                <select onchange="moveOpportunityStage('${e.id}', this.value)">
-                  <option value="">Mover a...</option>
-                  ${STAGE_ORDER.filter((s) => s !== e.stage).map((s) => `<option value="${s}">${STAGE_LABELS[s]}</option>`).join('')}
-                </select>
-              </td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-      <p>${data.total} oportunidades</p>
-    `;
-  } catch (err) {
-    el.textContent = 'Error: ' + err.message;
-  }
-}
-document.getElementById('opp-refresh').addEventListener('click', loadOpportunities);
-
-window.moveOpportunityStage = async (id, stage) => {
-  if (!stage) return;
-  try {
-    await api(`/pipeline/${id}/stage`, { method: 'POST', body: JSON.stringify({ stage }) });
-    loadOpportunities();
-  } catch (err) {
-    alert('Error: ' + err.message);
-  }
-};
 
 // ---------- Kanban ----------
 async function loadKanban() {
@@ -448,20 +422,7 @@ async function loadSettings() {
         <input id="test-sms-message" placeholder="Mensaje de prueba" />
         <button id="test-sms-send">Send test SMS</button>
       </div>
-      <h3>Message templates</h3>
-      <table>
-        <thead><tr><th>Action</th><th>Variant</th><th>Body</th><th></th></tr></thead>
-        <tbody>
-          ${data.templates.map((t) => `
-            <tr>
-              <td>${t.actionType}</td>
-              <td>${t.variant}</td>
-              <td><textarea data-action="${t.actionType}" data-variant="${t.variant}" rows="2" style="width:100%">${escapeHtml(t.body)}</textarea></td>
-              <td><button onclick="saveTemplate('${t.actionType}','${t.variant}', this)">Save</button></td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
+      <p class="hint">Los mensajes de la secuencia (inicial + follow-ups) se editan en la pestaña <strong>Mensajes</strong>.</p>
     `;
     document.getElementById('pause-btn').addEventListener('click', async () => {
       const reason = prompt('Motivo de la pausa:', 'Manual pause from admin panel');
@@ -487,16 +448,6 @@ async function loadSettings() {
     el.textContent = 'Error: ' + err.message;
   }
 }
-
-window.saveTemplate = async (actionType, variant, btn) => {
-  const textarea = btn.closest('tr').querySelector('textarea');
-  try {
-    await api(`/settings/templates/${actionType}/${variant}`, { method: 'PUT', body: JSON.stringify({ body: textarea.value }) });
-    alert('Guardado');
-  } catch (err) {
-    alert('Error: ' + err.message);
-  }
-};
 
 // ---------- Notifications ----------
 async function loadNotifications() {
@@ -529,16 +480,156 @@ window.markRead = async (id) => { await api(`/notifications/${id}/read`, { metho
 // ---------- CSV Import ----------
 document.getElementById('csv-upload').addEventListener('click', async () => {
   const fileInput = document.getElementById('csv-file');
+  const button = document.getElementById('csv-upload');
+  const progress = document.getElementById('csv-progress');
+  const progressText = document.getElementById('csv-progress-text');
   const report = document.getElementById('csv-report');
   if (!fileInput.files[0]) return alert('Selecciona un archivo CSV');
+
   const text = await fileInput.files[0].text();
+  const approxRows = Math.max(text.trim().split('\n').length - 1, 0);
+
+  button.disabled = true;
+  fileInput.disabled = true;
+  progress.classList.remove('hidden');
+  progressText.textContent = `Importando ~${approxRows} contactos… esto puede tardar unos segundos.`;
+  report.innerHTML = '';
+
   try {
     const res = await api('/import-csv', { method: 'POST', body: JSON.stringify({ csv: text }) });
-    report.textContent = JSON.stringify(res, null, 2);
+    report.innerHTML = `
+      <div class="cards">
+        <div class="card"><h4>Filas totales</h4><div class="value">${res.totalRows}</div></div>
+        <div class="card"><h4>Creados</h4><div class="value">${res.created}</div></div>
+        <div class="card"><h4>Actualizados</h4><div class="value">${res.updated}</div></div>
+        <div class="card"><h4>Activados en Kanban</h4><div class="value">${res.enrolled}</div></div>
+        <div class="card"><h4>Omitidos</h4><div class="value">${res.skipped.length}</div></div>
+      </div>
+      ${res.noActiveCampaign ? '<p class="warning">⚠️ No hay ninguna campaña activa: los contactos se importaron pero no se activaron en el Kanban. Activa una campaña en la pestaña Campaigns.</p>' : ''}
+      ${res.skipped.length ? `<details><summary>${res.skipped.length} filas omitidas</summary><pre>${escapeHtml(JSON.stringify(res.skipped, null, 2))}</pre></details>` : ''}
+    `;
   } catch (err) {
-    report.textContent = 'Error: ' + err.message;
+    report.innerHTML = `<p class="error">Error: ${escapeHtml(err.message)}</p>`;
+  } finally {
+    button.disabled = false;
+    fileInput.disabled = false;
+    progress.classList.add('hidden');
   }
 });
 
+// ---------- Mensajes (drip templates) ----------
+async function loadTemplates() {
+  const el = document.getElementById('templates-content');
+  el.textContent = 'Loading...';
+  try {
+    const data = await api('/message-templates');
+    const variableChips = [...data.variables.fixed, ...data.variables.custom]
+      .map((v) => `<button type="button" class="chip" data-var="${v}">{{${v}}}</button>`)
+      .join('');
+
+    el.innerHTML = `
+      ${!data.campaign ? '<p class="warning">⚠️ No hay ninguna campaña activa — los pasos de follow-up extra no se pueden activar hasta que exista una.</p>' : ''}
+      <h3>Variables disponibles</h3>
+      <p class="hint">Haz click en una variable para copiarla, luego pégala en el mensaje donde quieras (ej. {{company_name}}).</p>
+      <div class="variable-chips">${variableChips}</div>
+      <h3>Secuencia de mensajes</h3>
+      <div id="template-steps">${data.steps.map((s) => renderStepCard(s)).join('')}</div>
+    `;
+
+    el.querySelectorAll('.chip').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        navigator.clipboard?.writeText(`{{${chip.dataset.var}}}`);
+        chip.classList.add('copied');
+        setTimeout(() => chip.classList.remove('copied'), 800);
+      });
+    });
+
+    el.querySelectorAll('.step-save').forEach((btn) => {
+      btn.addEventListener('click', () => saveStepBody(btn.dataset.actionType, btn.dataset.variant));
+    });
+    el.querySelectorAll('.step-enable-form').forEach((form) => {
+      form.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        enableStep(form.dataset.actionType);
+      });
+    });
+    el.querySelectorAll('.step-disable').forEach((btn) => {
+      btn.addEventListener('click', () => disableStep(btn.dataset.actionType));
+    });
+  } catch (err) {
+    el.textContent = 'Error: ' + err.message;
+  }
+}
+
+function renderStepCard(step) {
+  if (!step.enabled) {
+    if (!step.canEnableNext) {
+      return `<div class="step-card disabled"><h4>${escapeHtml(step.label)}</h4><p class="hint">Activa antes los pasos anteriores.</p></div>`;
+    }
+    return `
+      <div class="step-card add-step">
+        <h4>${escapeHtml(step.label)} <span class="badge">no activo</span></h4>
+        <form class="step-enable-form" data-action-type="${step.actionType}">
+          <label>Enviar (horas después del paso anterior): <input type="number" min="1" name="delayHours" value="48" required /></label>
+          <label>Variante A <textarea name="A" rows="2" required></textarea></label>
+          <label>Variante B <textarea name="B" rows="2" required></textarea></label>
+          <label>Variante C <textarea name="C" rows="2" required></textarea></label>
+          <button type="submit">+ Añadir ${escapeHtml(step.label)}</button>
+        </form>
+      </div>
+    `;
+  }
+
+  const isOptional = !['INITIAL', 'FOLLOWUP_1', 'FOLLOWUP_2'].includes(step.actionType);
+  return `
+    <div class="step-card">
+      <h4>${escapeHtml(step.label)} ${step.delayHours != null ? `<span class="badge">+${step.delayHours}h</span>` : ''}
+        ${isOptional ? `<button type="button" class="secondary step-disable" data-action-type="${step.actionType}">Desactivar</button>` : ''}
+      </h4>
+      <div class="variant-grid">
+        ${['A', 'B', 'C'].map((variant) => `
+          <div class="variant-editor">
+            <strong>Variante ${variant}</strong>
+            <textarea rows="3" data-action-type="${step.actionType}" data-variant="${variant}" id="tpl-${step.actionType}-${variant}">${escapeHtml(step.templates[variant])}</textarea>
+            <button class="step-save" data-action-type="${step.actionType}" data-variant="${variant}">Guardar</button>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+async function saveStepBody(actionType, variant) {
+  const textarea = document.getElementById(`tpl-${actionType}-${variant}`);
+  try {
+    await api(`/message-templates/${actionType}`, { method: 'PUT', body: JSON.stringify({ variant, body: textarea.value }) });
+    alert('Guardado');
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
+}
+
+async function enableStep(actionType) {
+  const form = document.querySelector(`.step-enable-form[data-action-type="${actionType}"]`);
+  const delayHours = Number(form.elements.delayHours.value);
+  const bodies = { A: form.elements.A.value, B: form.elements.B.value, C: form.elements.C.value };
+  try {
+    await api(`/message-templates/${actionType}/enable`, { method: 'POST', body: JSON.stringify({ delayHours, bodies }) });
+    loadTemplates();
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
+}
+
+async function disableStep(actionType) {
+  if (!confirm(`¿Desactivar ${actionType}? Los envíos ya programados con este paso no se cancelan.`)) return;
+  try {
+    await api(`/message-templates/${actionType}/disable`, { method: 'POST' });
+    loadTemplates();
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
+}
+
 // ---------- Init ----------
-loadDashboard();
+activateTab(tabFromLocation());

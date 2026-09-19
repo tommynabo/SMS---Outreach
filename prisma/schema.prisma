@@ -60,6 +60,9 @@ enum ActionType {
   INITIAL
   FOLLOWUP_1
   FOLLOWUP_2
+  FOLLOWUP_3
+  FOLLOWUP_4
+  FOLLOWUP_5
 }
 
 enum ActionStatus {
@@ -146,6 +149,10 @@ model Contact {
   optedOutAt     DateTime? @map("opted_out_at")
   optOutMessage  String?   @map("opt_out_message")
 
+  // Free-form variables captured from CSV columns with no first-class field
+  // (e.g. a custom "google_reviews_text"). Used as {{key}} in message templates.
+  customFields Json? @map("custom_fields")
+
   tags             ContactTag[]
   pipelineEntries  PipelineEntry[]
   outreachActions  OutreachAction[]
@@ -187,6 +194,10 @@ model Campaign {
 
   followup1DelayHours Int @default(48) @map("followup_1_delay_hours")
   followup2DelayHours Int @default(96) @map("followup_2_delay_hours")
+  // Optional extra follow-up steps: NULL = step disabled for this campaign.
+  followup3DelayHours Int? @map("followup_3_delay_hours")
+  followup4DelayHours Int? @map("followup_4_delay_hours")
+  followup5DelayHours Int? @map("followup_5_delay_hours")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

@@ -132,3 +132,49 @@ pre { background: #1a1f36; color: #d3f9d8; padding: 12px; border-radius: 6px; ov
   justify-content: center;
   flex: none;
 }
+
+/* ---------- CSV import progress ---------- */
+.csv-progress { display: flex; align-items: center; gap: 10px; margin: 12px 0; }
+.csv-progress.hidden { display: none; }
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 3px solid #dde0f5;
+  border-top-color: #4f5bd5;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.hint { color: #666; font-size: 12px; }
+.warning { background: #fff3bf; color: #8a6d00; padding: 10px 14px; border-radius: 6px; font-size: 13px; }
+.error { color: #a11414; }
+
+/* ---------- Mensajes (drip templates) ---------- */
+.variable-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+.chip {
+  background: #eef0f7;
+  color: #333;
+  border: 1px solid #ccc;
+  border-radius: 14px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-family: monospace;
+  cursor: pointer;
+}
+.chip.copied { background: #d3f9d8; border-color: #1a7a2e; color: #1a7a2e; }
+.step-card {
+  background: white;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+.step-card.disabled { opacity: 0.6; }
+.step-card h4 { margin: 0 0 12px; display: flex; align-items: center; gap: 10px; }
+.variant-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.variant-editor { display: flex; flex-direction: column; gap: 6px; }
+.variant-editor textarea { width: 100%; font-size: 13px; font-family: inherit; }
+.step-enable-form { display: flex; flex-direction: column; gap: 8px; max-width: 480px; }
+.step-enable-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #444; }
+.step-enable-form textarea { width: 100%; font-family: inherit; }
+.step-enable-form input[type="number"] { width: 120px; }

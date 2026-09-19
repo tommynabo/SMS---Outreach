@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SMS Outreach — Admin</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>SMS Outreach</h1>
+    <nav>
+      <button data-tab="dashboard" class="tab-btn active">Dashboard</button>
+      <button data-tab="leads" class="tab-btn">Importar Leads</button>
+      <button data-tab="contacts" class="tab-btn">Contacts</button>
+      <button data-tab="opportunities" class="tab-btn">Oportunidades</button>
+      <button data-tab="kanban" class="tab-btn">Kanban</button>
+      <button data-tab="queue" class="tab-btn">Queue</button>
+      <button data-tab="campaigns" class="tab-btn">Campaigns</button>
+      <button data-tab="settings" class="tab-btn">Settings</button>
+      <button data-tab="notifications" class="tab-btn">Notifications</button>
+      <button data-tab="execution-log" class="tab-btn">Execution Log</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="tab-dashboard" class="tab-panel active">
+      <div id="dashboard-content">Loading...</div>
+    </section>
+
+    <section id="tab-leads" class="tab-panel">
+      <h3>Importar Leads (CSV)</h3>
+      <p>Sube el CSV de prospección (Google Maps scraping, GHL export, etc). Los teléfonos se normalizan a E.164 y se deduplican automáticamente — reimportar el mismo archivo nunca borra historial ni respuestas.</p>
+      <input type="file" id="csv-file" accept=".csv" />
+      <button id="csv-upload">Importar</button>
+      <pre id="csv-report"></pre>
+    </section>
+
+    <section id="tab-contacts" class="tab-panel">
+      <div class="toolbar">
+        <input id="contacts-search" placeholder="Buscar por empresa o teléfono" />
+        <select id="contacts-status-filter">
+          <option value="">Todos los estados</option>
+          <option value="NEW">NEW</option>
+          <option value="ACTIVE">ACTIVE</option>
+          <option value="REPLIED">REPLIED</option>
+          <option value="STOPPED">STOPPED</option>
+          <option value="COMPLETED">COMPLETED</option>
+          <option value="SEND_FAILED">SEND_FAILED</option>
+        </select>
+        <button id="contacts-refresh">Buscar</button>
+      </div>
+      <div class="toolbar">
+        <select id="bulk-action">
+          <option value="ADD_READY">Add outreach-ready</option>
+          <option value="REMOVE_READY">Remove outreach-ready</option>
+          <option value="ENROLL">Enroll campaign</option>
+          <option value="PAUSE">Pause contacts</option>
+          <option value="CANCEL_SEQUENCE">Cancel sequence</option>
+        </select>
+        <input id="bulk-campaign-id" placeholder="campaign id (para ENROLL)" />
+        <button id="bulk-apply">Aplicar a seleccionados</button>
+      </div>
+      <div id="contacts-table"></div>
+    </section>
+
+    <section id="tab-opportunities" class="tab-panel">
+      <div class="toolbar">
+        <select id="opp-campaign-filter"><option value="">Todas las campañas</option></select>
+        <select id="opp-stage-filter">
+          <option value="">Todas las etapas</option>
+          <option value="NUEVO_PROSPECTO">Nuevo prospecto</option>
+          <option value="SMS_ENVIADO">Enviado</option>
+          <option value="RESPONDIO">Respondido</option>
+          <option value="REUNION_AGENDADA">Llamada agendada</option>
+          <option value="NO_INTERESADO">Descartado</option>
+        </select>
+        <input id="opp-search" placeholder="Buscar por empresa o teléfono" />
+        <button id="opp-refresh">Buscar</button>
+      </div>
+      <div id="opportunities-table"></div>
+    </section>
+
+    <section id="tab-kanban" class="tab-panel">
+      <div class="toolbar">
+        <select id="kanban-campaign-filter"><option value="">Todas las campañas</option></select>
+        <button id="kanban-refresh">Refrescar</button>
+      </div>
+      <div id="kanban-board" class="kanban-board"></div>
+    </section>
+
+    <section id="tab-queue" class="tab-panel">
+      <div class="toolbar">
+        <select id="queue-status-filter">
+          <option value="">Todos los estados</option>
+          <option value="PENDING">PENDING</option>
+          <option value="LOCKED">LOCKED</option>
+          <option value="API_ACCEPTED">API_ACCEPTED</option>
+          <option value="SENT">SENT</option>
+          <option value="DELIVERED">DELIVERED</option>
+          <option value="FAILED">FAILED</option>
+          <option value="STALLED">STALLED</option>
+          <option value="UNKNOWN">UNKNOWN</option>
+          <option value="CANCELLED">CANCELLED</option>
+        </select>
+        <button id="queue-refresh">Buscar</button>
+      </div>
+      <div id="queue-table"></div>
+    </section>
+
+    <section id="tab-campaigns" class="tab-panel">
+      <div id="campaigns-table"></div>
+      <h3>Nueva campaña</h3>
+      <div class="toolbar">
+        <input id="new-campaign-name" placeholder="Nombre de campaña" />
+        <button id="new-campaign-create">Crear</button>
+      </div>
+    </section>
+
+    <section id="tab-settings" class="tab-panel">
+      <div id="settings-content">Loading...</div>
+    </section>
+
+    <section id="tab-notifications" class="tab-panel">
+      <div id="notifications-table"></div>
+    </section>
+
+    <section id="tab-execution-log" class="tab-panel">
+      <div class="toolbar">
+        <select id="log-event-filter"><option value="">Todos los eventos</option></select>
+        <button id="log-refresh">Buscar</button>
+      </div>
+      <div id="execution-log-table"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
+

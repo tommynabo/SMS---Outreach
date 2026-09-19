@@ -1,0 +1,60 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sms_outreach
+      POSTGRES_PASSWORD: sms_outreach
+      POSTGRES_DB: sms_outreach
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sms_outreach"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://sms_outreach:sms_outreach@db:5432/sms_outreach?schema=public
+    command: sh -c "npx prisma migrate deploy && npx prisma db seed"
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://sms_outreach:sms_outreach@db:5432/sms_outreach?schema=public
+    ports:
+      - "3000:3000"
+    command: ["node", "dist/api/server.js"]
+
+  worker:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://sms_outreach:sms_outreach@db:5432/sms_outreach?schema=public
+    command: ["node", "dist/worker/index.js"]
+
+volumes:
+  pgdata:

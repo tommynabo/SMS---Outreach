@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "buildCommand": "npx prisma generate",
+  "installCommand": "npm install",
+  "functions": {
+    "api/index.ts": {
+      "includeFiles": "src/admin/public/**",
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api/index" }
+  ]
+}

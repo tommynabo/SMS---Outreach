@@ -1,0 +1,417 @@
+// SMS Outreach — Prisma schema
+// PostgreSQL. This schema is the single source of truth for all outreach state.
+// Critical invariants enforced here via UNIQUE constraints:
+//  - contacts.phone_e164 UNIQUE            -> no duplicate contacts
+//  - contact_tags (contact_id, tag) UNIQUE -> idempotent tagging
+//  - pipeline_entries (contact_id, campaign_id) UNIQUE -> single opportunity per campaign
+//  - outreach_actions (campaign_id, contact_id, action_type) UNIQUE -> impossible to create two INITIAL/FOLLOWUP_1/FOLLOWUP_2
+//  - processed_webhook_events.idempotency_key UNIQUE -> webhooks processed exactly once
+
+generator client {
+  provider      = "prisma-client-js"
+  // "native" for local/Docker dev, rhel-openssl-3.0.x for Vercel's serverless runtime.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================================================
+// ENUMS
+// ==================================================
+
+enum OutreachVariant {
+  A
+  B
+  C
+}
+
+enum OutreachStatus {
+  NEW
+  READY
+  QUEUED
+  ACTIVE
+  INITIAL_PENDING
+  INITIAL_SENT
+  FOLLOWUP_1_PENDING
+  FOLLOWUP_1_SENT
+  FOLLOWUP_2_PENDING
+  FOLLOWUP_2_SENT
+  COMPLETED
+  REPLIED
+  STOPPED
+  SEND_FAILED
+  PAUSED
+}
+
+enum PipelineStage {
+  NUEVO_PROSPECTO
+  SMS_ENVIADO
+  RESPONDIO
+  SEGUIMIENTO
+  REUNION_AGENDADA
+  GANADO
+  NO_INTERESADO
+}
+
+enum ActionType {
+  INITIAL
+  FOLLOWUP_1
+  FOLLOWUP_2
+}
+
+enum ActionStatus {
+  PENDING
+  LOCKED
+  API_ACCEPTED
+  DISPATCHED
+  SENT
+  DELIVERED
+  FAILED
+  STALLED
+  CANCELLED
+  UNKNOWN
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageSource {
+  SYSTEM
+  TEXTBEE_MANUAL
+}
+
+enum NotificationType {
+  NEW_REPLY
+  OPT_OUT
+  SMS_FAILED
+  SMS_STALLED
+  CIRCUIT_BREAKER_OPEN
+  TEXTBEE_AUTH_ERROR
+  TEXTBEE_QUOTA_ERROR
+  UNKNOWN_INBOUND
+}
+
+enum NotificationStatus {
+  UNREAD
+  READ
+}
+
+// ==================================================
+// CONTACT
+// ==================================================
+
+model Contact {
+  id               String  @id @default(uuid())
+  name             String?
+  companyName      String? @map("company_name")
+  phoneOriginal    String  @map("phone_original")
+  phoneE164        String  @unique @map("phone_e164")
+  city             String?
+  website          String?
+  category         String?
+  rating           Float?
+  reviewsCount     Int?    @map("reviews_count")
+  about            String?
+  reviewSample     String? @map("review_sample")
+  reviewSampleRating Float? @map("review_sample_rating")
+  sourceQuery      String? @map("source_query")
+  mapsRank         Int?    @map("maps_rank")
+  mapsUrl          String? @map("maps_url")
+  placeId          String? @map("place_id")
+  address          String?
+  source           String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Outreach
+  outreachVariant OutreachVariant? @map("outreach_variant")
+  outreachStatus  OutreachStatus   @default(NEW) @map("outreach_status")
+
+  lastOutboundAt      DateTime? @map("last_outbound_at")
+  lastInboundAt       DateTime? @map("last_inbound_at")
+  lastSmsReply        String?   @map("last_sms_reply")
+  nextActionAt        DateTime? @map("next_action_at")
+  sequenceStartedAt   DateTime? @map("sequence_started_at")
+  sequenceCompletedAt DateTime? @map("sequence_completed_at")
+
+  doNotContactSms  Boolean @default(false) @map("do_not_contact_sms")
+  needsManualReply Boolean @default(false) @map("needs_manual_reply")
+
+  optedOutAt     DateTime? @map("opted_out_at")
+  optOutMessage  String?   @map("opt_out_message")
+
+  tags             ContactTag[]
+  pipelineEntries  PipelineEntry[]
+  outreachActions  OutreachAction[]
+  smsMessages      SmsMessage[]
+
+  @@map("contacts")
+  @@index([outreachStatus])
+  @@index([doNotContactSms])
+}
+
+model ContactTag {
+  id        String   @id @default(uuid())
+  contactId String   @map("contact_id")
+  tag       String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([contactId, tag])
+  @@map("contact_tags")
+  @@index([tag])
+}
+
+// ==================================================
+// CAMPAIGNS
+// ==================================================
+
+model Campaign {
+  id     String  @id @default(uuid())
+  name   String
+  active Boolean @default(true)
+
+  timezone              String @default("Europe/Madrid")
+  sendWindowStart        String @default("08:45") @map("send_window_start")
+  sendWindowEnd          String @default("18:45") @map("send_window_end")
+  allowedWeekdays        String @default("MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY") @map("allowed_weekdays")
+  minimumSendGapSeconds  Int    @default(600) @map("minimum_send_gap_seconds")
+  maxSmsPerDay           Int    @default(60) @map("max_sms_per_day")
+
+  followup1DelayHours Int @default(48) @map("followup_1_delay_hours")
+  followup2DelayHours Int @default(96) @map("followup_2_delay_hours")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  pipelineEntries PipelineEntry[]
+  outreachActions OutreachAction[]
+  smsMessages     SmsMessage[]
+
+  @@map("campaigns")
+}
+
+model PipelineEntry {
+  id         String        @id @default(uuid())
+  contactId  String        @map("contact_id")
+  campaignId String        @map("campaign_id")
+  stage      PipelineStage @default(NUEVO_PROSPECTO)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  contact  Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([contactId, campaignId])
+  @@map("pipeline_entries")
+}
+
+// ==================================================
+// MESSAGE TEMPLATES
+// ==================================================
+
+model MessageTemplate {
+  id         String          @id @default(uuid())
+  actionType ActionType      @map("action_type")
+  variant    OutreachVariant
+  body       String
+  active     Boolean         @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([actionType, variant])
+  @@map("message_templates")
+}
+
+// ==================================================
+// OUTREACH ACTIONS (the global queue)
+// ==================================================
+
+model OutreachAction {
+  id         String       @id @default(uuid())
+  campaignId String       @map("campaign_id")
+  contactId  String       @map("contact_id")
+  actionType ActionType   @map("action_type")
+  status     ActionStatus @default(PENDING)
+
+  scheduledFor DateTime  @map("scheduled_for")
+  lockedAt     DateTime? @map("locked_at")
+  attemptCount Int       @default(0) @map("attempt_count")
+
+  textbeeSmsId   String? @map("textbee_sms_id")
+  textbeeBatchId String? @map("textbee_batch_id")
+
+  renderedMessage String  @map("rendered_message")
+  apiResponseJson Json?   @map("api_response_json")
+  errorCode       String? @map("error_code")
+  errorMessage    String? @map("error_message")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  sentAt      DateTime? @map("sent_at")
+  deliveredAt DateTime? @map("delivered_at")
+  failedAt    DateTime? @map("failed_at")
+
+  contact     Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  campaign    Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  smsMessages SmsMessage[]
+
+  @@unique([campaignId, contactId, actionType])
+  @@map("outreach_actions")
+  @@index([status, scheduledFor])
+}
+
+// ==================================================
+// SMS LEDGER (source of truth, never deleted)
+// ==================================================
+
+model SmsMessage {
+  id               String            @id @default(uuid())
+  contactId        String?           @map("contact_id")
+  campaignId       String?           @map("campaign_id")
+  outreachActionId String?           @map("outreach_action_id")
+  direction        MessageDirection
+  source           MessageSource     @default(SYSTEM)
+
+  textbeeSmsId   String? @map("textbee_sms_id")
+  textbeeBatchId String? @map("textbee_batch_id")
+
+  phone String
+  body  String
+
+  status String @default("PENDING")
+
+  requestedAt   DateTime? @map("requested_at")
+  apiAcceptedAt DateTime? @map("api_accepted_at")
+  dispatchedAt  DateTime? @map("dispatched_at")
+  sentAt        DateTime? @map("sent_at")
+  deliveredAt   DateTime? @map("delivered_at")
+  failedAt      DateTime? @map("failed_at")
+  receivedAt    DateTime? @map("received_at")
+
+  errorCode    String? @map("error_code")
+  errorMessage String? @map("error_message")
+  rawPayload   Json?   @map("raw_payload")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  contact        Contact?        @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  campaign       Campaign?       @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  outreachAction OutreachAction? @relation(fields: [outreachActionId], references: [id], onDelete: SetNull)
+
+  @@map("sms_messages")
+  @@index([direction])
+  @@index([phone])
+  @@index([textbeeSmsId])
+}
+
+// ==================================================
+// WEBHOOK IDEMPOTENCY
+// ==================================================
+
+model ProcessedWebhookEvent {
+  id              String   @id @default(uuid())
+  idempotencyKey  String   @unique @map("idempotency_key")
+  eventType       String   @map("event_type")
+  receivedAt      DateTime @default(now()) @map("received_at")
+  payloadJson     Json     @map("payload_json")
+
+  @@map("processed_webhook_events")
+}
+
+// ==================================================
+// UNMATCHED INBOUND
+// ==================================================
+
+model UnmatchedInbound {
+  id         String   @id @default(uuid())
+  sender     String
+  message    String
+  receivedAt DateTime @map("received_at")
+  payload    Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("unmatched_inbound")
+}
+
+// ==================================================
+// NOTIFICATIONS
+// ==================================================
+
+model Notification {
+  id      String             @id @default(uuid())
+  type    NotificationType
+  status  NotificationStatus @default(UNREAD)
+  title   String
+  message String
+  meta    Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  readAt    DateTime? @map("read_at")
+
+  @@map("notifications")
+  @@index([status])
+}
+
+// ==================================================
+// AUDIT LOG
+// ==================================================
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  event       String
+  contactId   String?  @map("contact_id")
+  campaignId  String?  @map("campaign_id")
+  actor       String   @default("system")
+  detailsJson Json?    @map("details_json")
+  timestamp   DateTime @default(now())
+
+  @@map("audit_log")
+  @@index([event])
+  @@index([contactId])
+}
+
+// ==================================================
+// GLOBAL RUNTIME STATE (single row, pacing + circuit breaker)
+// ==================================================
+
+model CampaignRuntimeState {
+  id String @id @default("global")
+
+  globalPaused Boolean @default(false) @map("global_paused")
+  pauseReason  String? @map("pause_reason")
+
+  lastGlobalSendAttemptAt    DateTime? @map("last_global_send_attempt_at")
+  lastGlobalSuccessfulSendAt DateTime? @map("last_global_successful_send_at")
+
+  consecutiveFailures Int @default(0) @map("consecutive_failures")
+  consecutiveStalled  Int @default(0) @map("consecutive_stalled")
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("campaign_runtime_state")
+}
+
+// ==================================================
+// RECONCILIATION CURSOR
+// ==================================================
+
+model ReconciliationState {
+  id        String    @id @default("global")
+  cursor    String?
+  lastRunAt DateTime? @map("last_run_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@map("reconciliation_state")
+}

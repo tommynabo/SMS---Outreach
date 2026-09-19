@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+coverage/
+/generated/
+pgdata/
+
+# Raw leads exports contain real PII (names, phones, companies) — import them
+# via the admin panel ("Importar Leads") instead of committing to git.
+*.csv

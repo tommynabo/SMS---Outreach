@@ -78,25 +78,53 @@ async function loadDashboard() {
         <div class="card"><h4>Dry Run</h4><div class="value">${d.dryRun ? 'YES' : 'no'}</div></div>
         <div class="card"><h4>TextBee</h4><div class="value">${d.textbee.configured ? 'configured' : 'NOT configured'}</div></div>
       </div>
-      <h3>Today</h3>
+      ${d.contacts.pendingActivation > 0 ? `
+        <div class="callout">
+          <strong>${d.contacts.pendingActivation} contactos sin activar</strong> de un total de ${d.contacts.total}.
+          No aparecerán en el Kanban ni recibirán mensajes hasta que se activen.
+          <button type="button" id="dashboard-go-activate">Ir a Contacts para activarlos</button>
+        </div>
+      ` : ''}
+      <h3>Resumen de contactos</h3>
+      <div class="cards">
+        <div class="card highlight"><h4>Total</h4><div class="value">${d.contacts.total}</div></div>
+        <div class="card ${d.contacts.pendingActivation > 0 ? 'warning' : ''}"><h4>Pendientes de activar</h4><div class="value">${d.contacts.pendingActivation}</div></div>
+        <div class="card"><h4>Ready</h4><div class="value">${d.contacts.ready}</div></div>
+        <div class="card"><h4>Active</h4><div class="value">${d.contacts.active}</div></div>
+        <div class="card"><h4>Replied</h4><div class="value">${d.contacts.replied}</div></div>
+        <div class="card"><h4>Stopped</h4><div class="value">${d.contacts.stopped}</div></div>
+        <div class="card"><h4>Completed</h4><div class="value">${d.contacts.completed}</div></div>
+        <div class="card"><h4>Failed</h4><div class="value">${d.contacts.failed}</div></div>
+      </div>
+      <h3>Hoy</h3>
       <div class="cards">
         ${Object.entries(d.today).map(([k, v]) => `<div class="card"><h4>${k}</h4><div class="value">${v}</div></div>`).join('')}
       </div>
-      <h3>Queue</h3>
+      <h3>Cola de envíos</h3>
       <div class="cards">
         ${Object.entries(d.queue).map(([k, v]) => `<div class="card"><h4>${k}</h4><div class="value">${v}</div></div>`).join('')}
       </div>
-      <h3>Contacts</h3>
-      <div class="cards">
-        ${Object.entries(d.contacts).map(([k, v]) => `<div class="card"><h4>${k}</h4><div class="value">${v}</div></div>`).join('')}
-      </div>
     `;
+    document.getElementById('dashboard-go-activate')?.addEventListener('click', () => activateTab('contacts', { pushState: true }));
   } catch (err) {
     el.textContent = 'Error: ' + err.message;
   }
 }
 
 // ---------- Contacts ----------
+async function populateBulkCampaignSelect() {
+  const selectEl = document.getElementById('bulk-campaign-select');
+  const campaigns = await getCampaignsCache();
+  const current = selectEl.value;
+  selectEl.innerHTML = '<option value="">Selecciona campaña (Activar/Enroll)</option>' + campaigns.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  selectEl.value = current;
+}
+
+function updateContactsSelectedCount() {
+  const count = document.querySelectorAll('.contact-checkbox:checked').length;
+  document.getElementById('contacts-selected-count').textContent = count > 0 ? `${count} seleccionados` : '';
+}
+
 async function loadContacts() {
   const el = document.getElementById('contacts-table');
   const status = document.getElementById('contacts-status-filter').value;
@@ -104,6 +132,7 @@ async function loadContacts() {
   const params = new URLSearchParams();
   if (status) params.set('status', status);
   if (search) params.set('search', search);
+  params.set('pageSize', '1000');
   try {
     const data = await api('/contacts?' + params.toString());
     el.innerHTML = `
@@ -111,7 +140,7 @@ async function loadContacts() {
         <thead><tr><th><input type="checkbox" id="select-all" /></th><th>Company</th><th>Phone</th><th>Variant</th><th>Status</th><th>Tags</th><th>Last outbound</th><th>Last inbound</th></tr></thead>
         <tbody>
           ${data.items.map((c) => `
-            <tr>
+            <tr class="contact-row" data-id="${c.id}">
               <td><input type="checkbox" class="contact-checkbox" value="${c.id}" /></td>
               <td>${escapeHtml(c.companyName)}</td>
               <td>${escapeHtml(c.phoneE164)}</td>
@@ -128,7 +157,16 @@ async function loadContacts() {
     `;
     document.getElementById('select-all').addEventListener('change', (e) => {
       document.querySelectorAll('.contact-checkbox').forEach((cb) => (cb.checked = e.target.checked));
+      updateContactsSelectedCount();
     });
+    document.querySelectorAll('.contact-checkbox').forEach((cb) => {
+      cb.addEventListener('change', updateContactsSelectedCount);
+      cb.addEventListener('click', (ev) => ev.stopPropagation());
+    });
+    document.querySelectorAll('.contact-row').forEach((row) => {
+      row.addEventListener('click', () => openContactModal(row.dataset.id));
+    });
+    updateContactsSelectedCount();
   } catch (err) {
     el.textContent = 'Error: ' + err.message;
   }
@@ -140,10 +178,22 @@ document.getElementById('bulk-apply').addEventListener('click', async () => {
   const ids = Array.from(document.querySelectorAll('.contact-checkbox:checked')).map((cb) => cb.value);
   if (ids.length === 0) return alert('Selecciona al menos un contacto');
   const action = document.getElementById('bulk-action').value;
-  const campaignId = document.getElementById('bulk-campaign-id').value || undefined;
+  const campaignId = document.getElementById('bulk-campaign-select').value || undefined;
   try {
     const res = await api('/contacts/bulk', { method: 'POST', body: JSON.stringify({ contactIds: ids, action, campaignId }) });
     alert('Aplicado: ' + JSON.stringify(res.results.filter((r) => !r.ok)));
+    loadContacts();
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
+});
+
+document.getElementById('contacts-delete-selected').addEventListener('click', async () => {
+  const ids = Array.from(document.querySelectorAll('.contact-checkbox:checked')).map((cb) => cb.value);
+  if (ids.length === 0) return alert('Selecciona al menos un contacto');
+  if (!confirm(`¿Eliminar ${ids.length} contacto(s) de forma permanente? Esta acción no se puede deshacer.`)) return;
+  try {
+    await api('/contacts/bulk', { method: 'POST', body: JSON.stringify({ contactIds: ids, action: 'DELETE' }) });
     loadContacts();
   } catch (err) {
     alert('Error: ' + err.message);
@@ -192,6 +242,67 @@ async function populateCampaignFilter(selectEl) {
   selectEl.value = current;
 }
 
+// ---------- Contact detail modal (shared by Contacts table & Kanban) ----------
+async function openContactModal(contactId) {
+  const overlay = document.getElementById('contact-modal');
+  const body = document.getElementById('contact-modal-body');
+  overlay.classList.remove('hidden');
+  body.innerHTML = 'Loading...';
+  try {
+    const [contact, messages] = await Promise.all([
+      api(`/contacts/${contactId}`),
+      api(`/contacts/${contactId}/messages`),
+    ]);
+    const c = contact.contact || contact;
+    const customFields = c.customFields && typeof c.customFields === 'object' ? Object.entries(c.customFields) : [];
+    body.innerHTML = `
+      <h3>${escapeHtml(c.companyName || c.name || 'Sin nombre')}</h3>
+      <p><strong>Teléfono:</strong> ${escapeHtml(c.phoneE164)} &nbsp; <strong>Estado:</strong> <span class="badge ${c.outreachStatus}">${c.outreachStatus}</span> &nbsp; <strong>Variante:</strong> ${escapeHtml(c.outreachVariant || '')}</p>
+      <p><strong>Ciudad:</strong> ${escapeHtml(c.city || '')} &nbsp; <strong>Categoría:</strong> ${escapeHtml(c.category || '')}</p>
+      <p><strong>Tags:</strong> ${(c.tags || []).map((t) => t.tag).join(', ') || '—'}</p>
+      ${customFields.length ? `<details><summary>Campos personalizados</summary><pre>${escapeHtml(JSON.stringify(Object.fromEntries(customFields), null, 2))}</pre></details>` : ''}
+      ${c.outreachStatus === 'NEW' ? `<button type="button" id="modal-activate-now">Activar ahora</button>` : ''}
+      <h4>Historial de acciones</h4>
+      <table>
+        <thead><tr><th>Tipo</th><th>Estado</th><th>Programado</th></tr></thead>
+        <tbody>
+          ${(c.outreachActions || []).map((a) => `<tr><td>${a.actionType}</td><td><span class="badge ${a.status}">${a.status}</span></td><td>${new Date(a.scheduledFor).toLocaleString()}</td></tr>`).join('') || '<tr><td colspan="3">Sin acciones</td></tr>'}
+        </tbody>
+      </table>
+      <h4>Historial de mensajes</h4>
+      <table>
+        <thead><tr><th>Dirección</th><th>Estado</th><th>Cuerpo</th><th>Fecha</th></tr></thead>
+        <tbody>
+          ${(messages.messages || messages.items || []).map((m) => `<tr><td>${m.direction}</td><td><span class="badge">${m.status}</span></td><td>${escapeHtml(m.body)}</td><td>${new Date(m.requestedAt || m.receivedAt).toLocaleString()}</td></tr>`).join('') || '<tr><td colspan="4">Sin mensajes</td></tr>'}
+        </tbody>
+      </table>
+    `;
+    document.getElementById('modal-activate-now')?.addEventListener('click', async () => {
+      const campaigns = await getCampaignsCache();
+      const active = campaigns.find((camp) => camp.active);
+      if (!active) return alert('No hay ninguna campaña activa.');
+      try {
+        await api('/contacts/bulk', { method: 'POST', body: JSON.stringify({ contactIds: [contactId], action: 'ACTIVATE', campaignId: active.id }) });
+        closeContactModal();
+        loadContacts();
+        loadKanban();
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
+    });
+  } catch (err) {
+    body.innerHTML = 'Error: ' + escapeHtml(err.message);
+  }
+}
+
+function closeContactModal() {
+  document.getElementById('contact-modal').classList.add('hidden');
+}
+document.getElementById('contact-modal-close').addEventListener('click', closeContactModal);
+document.getElementById('contact-modal').addEventListener('click', (ev) => {
+  if (ev.target.id === 'contact-modal') closeContactModal();
+});
+
 // ---------- Kanban ----------
 async function loadKanban() {
   const board = document.getElementById('kanban-board');
@@ -229,11 +340,21 @@ async function loadKanban() {
     }).join('');
 
     board.querySelectorAll('.kanban-card').forEach((card) => {
+      let dragged = false;
       card.addEventListener('dragstart', (ev) => {
+        dragged = true;
         ev.dataTransfer.setData('text/plain', card.dataset.id);
         card.classList.add('dragging');
       });
       card.addEventListener('dragend', () => card.classList.remove('dragging'));
+      card.addEventListener('click', () => {
+        if (dragged) {
+          dragged = false;
+          return;
+        }
+        const entry = (data.columns[card.closest('.kanban-cards').dataset.stage] || []).find((e) => e.id === card.dataset.id);
+        if (entry?.contact?.id) openContactModal(entry.contact.id);
+      });
     });
 
     board.querySelectorAll('.kanban-cards').forEach((column) => {
@@ -518,6 +639,16 @@ document.getElementById('csv-upload').addEventListener('click', async () => {
 });
 
 // ---------- Mensajes (drip templates) ----------
+let lastFocusedTemplateTextarea = null;
+function insertAtCursor(textarea, text) {
+  const start = textarea.selectionStart ?? textarea.value.length;
+  const end = textarea.selectionEnd ?? textarea.value.length;
+  textarea.value = textarea.value.slice(0, start) + text + textarea.value.slice(end);
+  const newPos = start + text.length;
+  textarea.setSelectionRange(newPos, newPos);
+  textarea.focus();
+}
+
 async function loadTemplates() {
   const el = document.getElementById('templates-content');
   el.textContent = 'Loading...';
@@ -537,10 +668,34 @@ async function loadTemplates() {
     `;
 
     el.querySelectorAll('.chip').forEach((chip) => {
+      chip.setAttribute('draggable', 'true');
+      chip.addEventListener('dragstart', (ev) => {
+        ev.dataTransfer.setData('text/plain', `{{${chip.dataset.var}}}`);
+      });
       chip.addEventListener('click', () => {
-        navigator.clipboard?.writeText(`{{${chip.dataset.var}}}`);
+        const text = `{{${chip.dataset.var}}}`;
+        if (lastFocusedTemplateTextarea && document.body.contains(lastFocusedTemplateTextarea)) {
+          insertAtCursor(lastFocusedTemplateTextarea, text);
+        } else {
+          navigator.clipboard?.writeText(text);
+        }
         chip.classList.add('copied');
         setTimeout(() => chip.classList.remove('copied'), 800);
+      });
+    });
+
+    el.querySelectorAll('.variant-editor textarea, .step-enable-form textarea').forEach((textarea) => {
+      textarea.addEventListener('focus', () => { lastFocusedTemplateTextarea = textarea; });
+      textarea.addEventListener('dragover', (ev) => {
+        ev.preventDefault();
+        textarea.classList.add('drag-over');
+      });
+      textarea.addEventListener('dragleave', () => textarea.classList.remove('drag-over'));
+      textarea.addEventListener('drop', (ev) => {
+        ev.preventDefault();
+        textarea.classList.remove('drag-over');
+        const text = ev.dataTransfer.getData('text/plain');
+        if (text) insertAtCursor(textarea, text);
       });
     });
 
@@ -632,4 +787,5 @@ async function disableStep(actionType) {
 }
 
 // ---------- Init ----------
+populateBulkCampaignSelect();
 activateTab(tabFromLocation());

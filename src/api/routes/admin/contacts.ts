@@ -6,17 +6,18 @@ import { addTag, removeTag } from '../../../services/tags';
 import { enrollContactInCampaign } from '../../../outreach/enrollment';
 import { cancelPendingActionsForContact } from '../../../outreach/sequence';
 import { writeAuditLog } from '../../../services/auditLog';
+import { mapWithConcurrency } from '../../../lib/concurrency';
 
 const listQuerySchema = z.object({
   status: z.string().optional(),
   search: z.string().optional(),
   page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(200).default(50),
+  pageSize: z.coerce.number().int().min(1).max(2000).default(1000),
 });
 
 const bulkActionSchema = z.object({
   contactIds: z.array(z.string()).min(1),
-  action: z.enum(['ADD_READY', 'REMOVE_READY', 'ENROLL', 'PAUSE', 'CANCEL_SEQUENCE']),
+  action: z.enum(['ADD_READY', 'REMOVE_READY', 'ENROLL', 'ACTIVATE', 'PAUSE', 'CANCEL_SEQUENCE', 'DELETE']),
   campaignId: z.string().optional(),
 });
 
@@ -70,7 +71,18 @@ export async function registerContactsRoutes(app: FastifyInstance): Promise<void
     const body = bulkActionSchema.parse(request.body);
     const results: Array<{ contactId: string; ok: boolean; reason?: string }> = [];
 
-    for (const contactId of body.contactIds) {
+    // Fast path: a single deleteMany is far quicker than N sequential deletes
+    // and avoids timing out on large "select all + delete" batches.
+    if (body.action === 'DELETE') {
+      await prisma.contact.deleteMany({ where: { id: { in: body.contactIds } } });
+      await writeAuditLog('CONTACT_DELETED', { actor: 'admin', details: { count: body.contactIds.length } });
+      return reply.send({ results: body.contactIds.map((contactId) => ({ contactId, ok: true })) });
+    }
+
+    // Everything else touches multiple tables per contact (tags, pipeline, outreach
+    // actions) — run with bounded concurrency so large batches (hundreds of
+    // contacts) don't time out a serverless function running them one at a time.
+    await mapWithConcurrency(body.contactIds, 8, async (contactId) => {
       try {
         switch (body.action) {
           case 'ADD_READY':
@@ -83,6 +95,14 @@ export async function registerContactsRoutes(app: FastifyInstance): Promise<void
             if (!body.campaignId) throw new Error('campaignId required for ENROLL');
             const outcome = await enrollContactInCampaign(contactId, body.campaignId);
             if (!outcome.enrolled) throw new Error(outcome.reason);
+            break;
+          }
+          case 'ACTIVATE': {
+            // Convenience: tag outreach-ready + enroll in one step (same as CSV auto-activation).
+            if (!body.campaignId) throw new Error('campaignId required for ACTIVATE');
+            await addTag(contactId, 'outreach-ready');
+            const outcome = await enrollContactInCampaign(contactId, body.campaignId);
+            if (!outcome.enrolled && outcome.reason !== 'ALREADY_ENROLLED') throw new Error(outcome.reason);
             break;
           }
           case 'PAUSE':
@@ -102,7 +122,7 @@ export async function registerContactsRoutes(app: FastifyInstance): Promise<void
       } catch (err) {
         results.push({ contactId, ok: false, reason: (err as Error).message });
       }
-    }
+    });
 
     return reply.send({ results });
   });

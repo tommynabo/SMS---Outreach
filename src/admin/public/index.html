@@ -56,14 +56,17 @@
       </div>
       <div class="toolbar">
         <select id="bulk-action">
+          <option value="ACTIVATE">Activar (tag + enroll)</option>
           <option value="ADD_READY">Add outreach-ready</option>
           <option value="REMOVE_READY">Remove outreach-ready</option>
           <option value="ENROLL">Enroll campaign</option>
           <option value="PAUSE">Pause contacts</option>
           <option value="CANCEL_SEQUENCE">Cancel sequence</option>
         </select>
-        <input id="bulk-campaign-id" placeholder="campaign id (para ENROLL)" />
+        <select id="bulk-campaign-select"><option value="">Selecciona campaña (Activar/Enroll)</option></select>
         <button id="bulk-apply">Aplicar a seleccionados</button>
+        <span id="contacts-selected-count" class="hint"></span>
+        <button id="contacts-delete-selected" class="danger">Eliminar seleccionados</button>
       </div>
       <div id="contacts-table"></div>
     </section>
@@ -124,6 +127,13 @@
       <div id="execution-log-table"></div>
     </section>
   </main>
+
+  <div id="contact-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <button id="contact-modal-close" class="modal-close" type="button">&times;</button>
+      <div id="contact-modal-body">Loading...</div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>

@@ -5,6 +5,7 @@ import { normalizePhoneToE164 } from '../lib/phone';
 import { addTag } from './tags';
 import { writeAuditLog } from './auditLog';
 import { enrollContactInCampaign } from '../outreach/enrollment';
+import { mapWithConcurrency } from '../lib/concurrency';
 
 export interface CsvImportRow {
   'Contact Name'?: string;
@@ -115,76 +116,102 @@ export async function importContactsFromCsv(csvContent: string): Promise<ImportR
   const defaultCampaign = await prisma.campaign.findFirst({ where: { active: true }, orderBy: { createdAt: 'asc' } });
   report.noActiveCampaign = !defaultCampaign;
 
+  // Group rows by normalized phone first (no DB calls yet) so that rows sharing
+  // the same phone (duplicates within the same file) are still processed in
+  // their original order relative to each other — later rows overwrite earlier
+  // ones, exactly like the old fully-sequential loop did. Distinct phones are
+  // independent, so their groups can run concurrently, which is what actually
+  // matters for speed: hundreds of rows sequentially against a remote DB is far
+  // too slow for a serverless function's execution time limit.
+  const groups = new Map<string, Array<{ row: CsvImportRow; index: number }>>();
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     if (!row) continue;
     const rawPhone = row.Phone ?? '';
     const normalized = normalizePhoneToE164(rawPhone);
-
     if (!normalized.valid || !normalized.e164) {
       report.skipped.push({ row: i + 1, reason: `invalid phone: ${rawPhone}`, phone: rawPhone });
       continue;
     }
+    const list = groups.get(normalized.e164) ?? [];
+    list.push({ row, index: i });
+    groups.set(normalized.e164, list);
+  }
 
-    const data = {
-      name: row['Contact Name'] || null,
-      companyName: row['Company Name'] || null,
-      phoneOriginal: rawPhone,
-      city: row.City || null,
-      website: row.Website || null,
-      category: row.Category || null,
-      rating: toFloat(row.Rating),
-      reviewsCount: toInt(row['Reviews Count']),
-      about: row.About || null,
-      reviewSample: row['Review Sample'] || null,
-      reviewSampleRating: toFloat(row['Review Sample Rating']),
-      sourceQuery: row['Source Query'] || null,
-      mapsRank: toInt(row['Maps Rank']),
-      mapsUrl: row['Maps URL'] || null,
-      placeId: row['Place ID'] || null,
-      address: row.Address || null,
-      source: row.Source || null,
-    };
+  async function processContactGroup(phoneE164: string, entries: Array<{ row: CsvImportRow; index: number }>) {
+    for (const { row } of entries) {
+      const rawPhone = row.Phone ?? '';
+      const data = {
+        name: row['Contact Name'] || null,
+        companyName: row['Company Name'] || null,
+        phoneOriginal: rawPhone,
+        city: row.City || null,
+        website: row.Website || null,
+        category: row.Category || null,
+        rating: toFloat(row.Rating),
+        reviewsCount: toInt(row['Reviews Count']),
+        about: row.About || null,
+        reviewSample: row['Review Sample'] || null,
+        reviewSampleRating: toFloat(row['Review Sample Rating']),
+        sourceQuery: row['Source Query'] || null,
+        mapsRank: toInt(row['Maps Rank']),
+        mapsUrl: row['Maps URL'] || null,
+        placeId: row['Place ID'] || null,
+        address: row.Address || null,
+        source: row.Source || null,
+      };
 
-    const existing = await prisma.contact.findUnique({ where: { phoneE164: normalized.e164 } });
-    const newCustomFields = extractCustomFields(row);
-    const existingCustomFields =
-      existing?.customFields && typeof existing.customFields === 'object' && !Array.isArray(existing.customFields)
-        ? (existing.customFields as Record<string, unknown>)
-        : {};
-    const mergedCustomFields = { ...existingCustomFields, ...newCustomFields };
-    const dataWithCustomFields =
-      Object.keys(newCustomFields).length > 0
-        ? { ...data, customFields: mergedCustomFields as Prisma.InputJsonValue }
-        : data;
+      const existing = await prisma.contact.findUnique({ where: { phoneE164 } });
+      const newCustomFields = extractCustomFields(row);
+      const existingCustomFields =
+        existing?.customFields && typeof existing.customFields === 'object' && !Array.isArray(existing.customFields)
+          ? (existing.customFields as Record<string, unknown>)
+          : {};
+      const mergedCustomFields = { ...existingCustomFields, ...newCustomFields };
+      const dataWithCustomFields =
+        Object.keys(newCustomFields).length > 0
+          ? { ...data, customFields: mergedCustomFields as Prisma.InputJsonValue }
+          : data;
 
-    let contactId: string;
-    if (existing) {
-      await prisma.contact.update({ where: { id: existing.id }, data: dataWithCustomFields });
-      contactId = existing.id;
-      report.updated += 1;
-    } else {
-      const created = await prisma.contact.create({ data: { ...dataWithCustomFields, phoneE164: normalized.e164 } });
-      contactId = created.id;
-      report.created += 1;
-    }
+      let contactId: string;
+      if (existing) {
+        await prisma.contact.update({ where: { id: existing.id }, data: dataWithCustomFields });
+        contactId = existing.id;
+        report.updated += 1;
+      } else {
+        try {
+          const created = await prisma.contact.create({ data: { ...dataWithCustomFields, phoneE164 } });
+          contactId = created.id;
+          report.created += 1;
+        } catch (err) {
+          // Another concurrent group somehow raced on the same phone (shouldn't
+          // happen since we group by phone above, but stay safe): fall back to update.
+          const conflict = await prisma.contact.findUniqueOrThrow({ where: { phoneE164 } });
+          await prisma.contact.update({ where: { id: conflict.id }, data: dataWithCustomFields });
+          contactId = conflict.id;
+          report.updated += 1;
+        }
+      }
 
-    const tags = (row.Tags ?? '')
-      .split(',')
-      .map((t) => t.trim())
-      .filter(Boolean);
-    for (const tag of tags) {
-      await addTag(contactId, tag);
-    }
+      const tags = (row.Tags ?? '')
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
+      for (const tag of tags) {
+        await addTag(contactId, tag);
+      }
 
-    // Auto-enroll: every imported contact is ready-for-outreach by default so
-    // it shows up on the Kanban board without a manual "outreach-ready" step.
-    await addTag(contactId, 'outreach-ready');
-    if (defaultCampaign) {
-      const result = await enrollContactInCampaign(contactId, defaultCampaign.id);
-      if (result.enrolled) report.enrolled += 1;
+      // Auto-enroll: every imported contact is ready-for-outreach by default so
+      // it shows up on the Kanban board without a manual "outreach-ready" step.
+      await addTag(contactId, 'outreach-ready');
+      if (defaultCampaign) {
+        const result = await enrollContactInCampaign(contactId, defaultCampaign.id);
+        if (result.enrolled) report.enrolled += 1;
+      }
     }
   }
+
+  await mapWithConcurrency(Array.from(groups.entries()), 10, ([phoneE164, entries]) => processContactGroup(phoneE164, entries));
 
   await writeAuditLog('CSV_IMPORT', {
     details: {

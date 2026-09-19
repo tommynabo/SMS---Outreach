@@ -5,7 +5,7 @@
   "functions": {
     "api/index.ts": {
       "includeFiles": "src/admin/public/**",
-      "maxDuration": 30
+      "maxDuration": 60
     }
   },
   "rewrites": [

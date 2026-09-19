@@ -178,3 +178,66 @@ pre { background: #1a1f36; color: #d3f9d8; padding: 12px; border-radius: 6px; ov
 .step-enable-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #444; }
 .step-enable-form textarea { width: 100%; font-family: inherit; }
 .step-enable-form input[type="number"] { width: 120px; }
+
+/* ---------- Dashboard callout & card variants ---------- */
+.callout {
+  background: #fff3bf;
+  color: #6b4d00;
+  border: 1px solid #f0d97a;
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.callout button { background: #8a6d00; }
+.card.highlight { border: 2px solid #4f5bd5; }
+.card.warning { border: 2px solid #d64545; }
+
+/* ---------- Contacts table ---------- */
+.contact-row { cursor: pointer; }
+.contact-row:hover { background: #f0f2fb; }
+#contacts-selected-count { align-self: center; }
+
+/* ---------- Contact detail modal ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px;
+  overflow-y: auto;
+  z-index: 100;
+}
+.modal-overlay.hidden { display: none; }
+.modal {
+  background: white;
+  border-radius: 10px;
+  padding: 24px;
+  max-width: 720px;
+  width: 100%;
+  position: relative;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+}
+.modal-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: transparent;
+  color: #666;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+#contact-modal-body table { margin: 8px 0 16px; }
+#contact-modal-body h4 { margin-top: 18px; }
+
+/* ---------- Chip drag/drop ---------- */
+.chip[draggable="true"] { cursor: grab; }
+.variant-editor textarea.drag-over, .step-enable-form textarea.drag-over { outline: 2px dashed #4f5bd5; }

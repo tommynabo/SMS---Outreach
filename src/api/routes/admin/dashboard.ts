@@ -20,19 +20,24 @@ export async function registerDashboardRoutes(app: FastifyInstance): Promise<voi
       prisma.contact.count({ where: { optedOutAt: { gte: start, lte: end } } }),
     ]);
 
-    const [pendingInitial, pendingFollowup1, pendingFollowup2] = await Promise.all([
+    const [pendingInitial, pendingFollowup1, pendingFollowup2, pendingFollowup3, pendingFollowup4, pendingFollowup5] = await Promise.all([
       prisma.outreachAction.count({ where: { status: ActionStatus.PENDING, actionType: ActionType.INITIAL } }),
       prisma.outreachAction.count({ where: { status: ActionStatus.PENDING, actionType: ActionType.FOLLOWUP_1 } }),
       prisma.outreachAction.count({ where: { status: ActionStatus.PENDING, actionType: ActionType.FOLLOWUP_2 } }),
+      prisma.outreachAction.count({ where: { status: ActionStatus.PENDING, actionType: ActionType.FOLLOWUP_3 } }),
+      prisma.outreachAction.count({ where: { status: ActionStatus.PENDING, actionType: ActionType.FOLLOWUP_4 } }),
+      prisma.outreachAction.count({ where: { status: ActionStatus.PENDING, actionType: ActionType.FOLLOWUP_5 } }),
     ]);
 
-    const [ready, active, replied, stopped, completed, sendFailed] = await Promise.all([
+    const [total, ready, active, replied, stopped, completed, sendFailed, pendingActivation] = await Promise.all([
+      prisma.contact.count(),
       prisma.contactTag.count({ where: { tag: 'outreach-ready' } }),
       prisma.contact.count({ where: { outreachStatus: { in: [OutreachStatus.ACTIVE, OutreachStatus.INITIAL_SENT, OutreachStatus.FOLLOWUP_1_SENT, OutreachStatus.FOLLOWUP_2_SENT] } } }),
       prisma.contact.count({ where: { outreachStatus: OutreachStatus.REPLIED } }),
       prisma.contact.count({ where: { outreachStatus: OutreachStatus.STOPPED } }),
       prisma.contact.count({ where: { outreachStatus: OutreachStatus.COMPLETED } }),
       prisma.contact.count({ where: { outreachStatus: OutreachStatus.SEND_FAILED } }),
+      prisma.contact.count({ where: { outreachStatus: OutreachStatus.NEW } }),
     ]);
 
     return {
@@ -42,8 +47,15 @@ export async function registerDashboardRoutes(app: FastifyInstance): Promise<voi
       environment: env.environment,
       textbee: { configured: Boolean(env.textbee.apiKey) },
       today: { attempted, sent, delivered, failed, stalled, replies: repliesToday, optOuts: optOutsToday },
-      queue: { pendingInitial, pendingFollowup1, pendingFollowup2 },
-      contacts: { ready, active, replied, stopped, completed, failed: sendFailed },
+      queue: {
+        pendingInitial,
+        pendingFollowup1,
+        pendingFollowup2,
+        pendingFollowup3,
+        pendingFollowup4,
+        pendingFollowup5,
+      },
+      contacts: { total, ready, active, replied, stopped, completed, failed: sendFailed, pendingActivation },
     };
   });
 }

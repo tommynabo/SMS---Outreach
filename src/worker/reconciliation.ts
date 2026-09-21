@@ -24,7 +24,9 @@ function toNormalized(msg: TextBeeMessage) {
 
 /**
  * Reconciliation job — NOT the only mechanism, but a safety net for missed
- * webhooks. Uses a persisted cursor so restarts never reprocess or skip pages.
+ * webhooks. Polls the newest page and only processes records changed since the
+ * previous run, with a small overlap for clock skew. The 100-message page is
+ * larger than the application's 60-per-day send cap.
  * Every message is matched by textbee smsId/batchId, never by text content
  * alone, to avoid corrupting unrelated records.
  */
@@ -40,13 +42,20 @@ export async function runReconciliationTick(): Promise<{ processed: number }> {
     update: {},
   });
 
-  let cursor = state.cursor;
+  const startedAt = new Date();
+  const overlapMs = 60_000;
+  const changedSince = new Date(
+    (state.lastRunAt?.getTime() ?? startedAt.getTime() - env.reconciliationIntervalSeconds * 2_000) - overlapMs,
+  );
   let processed = 0;
 
   try {
-    const { messages, nextCursor } = await textBeeClient.listMessages(cursor);
+    const { messages } = await textBeeClient.listMessages(null);
 
     for (const msg of messages) {
+      const changedAt = new Date(msg.updatedAt ?? msg.createdAt ?? 0);
+      if (Number.isNaN(changedAt.getTime()) || changedAt < changedSince) continue;
+
       const normalized = toNormalized(msg);
       const status = (msg.status ?? '').toLowerCase();
       const direction = (msg.direction ?? '').toLowerCase();
@@ -64,8 +73,6 @@ export async function runReconciliationTick(): Promise<{ processed: number }> {
       }
       processed += 1;
     }
-
-    cursor = nextCursor ?? cursor;
   } catch (err) {
     if (err instanceof TextBeeApiError) {
       logger.error({ category: err.category, statusCode: err.statusCode }, 'Reconciliation job: TextBee API error');
@@ -76,7 +83,7 @@ export async function runReconciliationTick(): Promise<{ processed: number }> {
 
   await prisma.reconciliationState.update({
     where: { id: RUNTIME_ID },
-    data: { cursor, lastRunAt: new Date() },
+    data: { cursor: null, lastRunAt: startedAt },
   });
 
   return { processed };

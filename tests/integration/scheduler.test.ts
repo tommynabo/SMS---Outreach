@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { prisma } from '../../src/db/client';
+import { env } from '../../src/config/env';
 import { resetDatabase, seedTemplates, createTestCampaign, createTestContact } from './helpers';
 import { enrollContactInCampaign } from '../../src/outreach/enrollment';
 import { addTag } from '../../src/services/tags';
@@ -13,6 +14,10 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await prisma.$disconnect();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 async function enrollReady(campaignId: string) {
@@ -61,6 +66,52 @@ describe('runSchedulerTick', () => {
 
     const second = await runSchedulerTick();
     expect(second.outcome).toBe('gap-not-elapsed');
+  });
+
+  it('renders the current database template immediately before sending', async () => {
+    const campaign = await createTestCampaign();
+    const contact = await createTestContact({ outreachVariant: 'A', companyName: 'Clinica Norte', city: 'Madrid' });
+    await addTag(contact.id, 'outreach-ready');
+    await enrollContactInCampaign(contact.id, campaign.id);
+
+    await prisma.messageTemplate.update({
+      where: { actionType_variant: { actionType: 'INITIAL', variant: 'A' } },
+      data: { body: 'Mensaje actualizado para {{company_name}} en {{city}}' },
+    });
+
+    const outcome = await runSchedulerTick();
+    expect(outcome.outcome).toBe('dry-run');
+
+    const message = await prisma.smsMessage.findFirstOrThrow({ where: { contactId: contact.id } });
+    const action = await prisma.outreachAction.findFirstOrThrow({ where: { contactId: contact.id, actionType: 'INITIAL' } });
+    expect(message.body).toBe('Mensaje actualizado para Clinica Norte en Madrid');
+    expect(action.renderedMessage).toBe(message.body);
+  });
+
+  it('moves an accepted initial SMS to the Kanban sent column without scheduling its follow-up', async () => {
+    const previousDryRun = env.dryRun;
+    const previousEnvironment = env.environment;
+    env.dryRun = false;
+    env.environment = 'production';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: { smsBatchId: 'batch-accepted' },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
+
+    try {
+      const campaign = await createTestCampaign();
+      const contact = await enrollReady(campaign.id);
+
+      const outcome = await runSchedulerTick();
+      expect(outcome.outcome).toBe('sent');
+
+      const entry = await prisma.pipelineEntry.findUniqueOrThrow({ where: { contactId_campaignId: { contactId: contact.id, campaignId: campaign.id } } });
+      const followups = await prisma.outreachAction.count({ where: { contactId: contact.id, actionType: 'FOLLOWUP_1' } });
+      expect(entry.stage).toBe('SMS_ENVIADO');
+      expect(followups).toBe(0);
+    } finally {
+      env.dryRun = previousDryRun;
+      env.environment = previousEnvironment;
+    }
   });
 
   it('two concurrent ticks never both send (advisory-lock protected)', async () => {

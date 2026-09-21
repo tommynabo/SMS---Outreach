@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { ActionStatus, ActionType, OutreachStatus, OutreachVariant } from '@prisma/client';
+import { ActionStatus, ActionType, Campaign, OutreachStatus, OutreachVariant } from '@prisma/client';
+import { DateTime } from 'luxon';
 import { prisma } from '../../../db/client';
 import { env } from '../../../config/env';
 import { localDayBounds } from '../../../lib/time';
@@ -8,6 +9,60 @@ import { getRuntimeState } from '../../../services/circuitBreaker';
 interface VariantMessageRow {
   variant: OutreachVariant | null;
   messages_sent: bigint;
+}
+
+function parseHm(value: string): { hour: number; minute: number } {
+  const [hour, minute] = value.split(':').map((part) => Number.parseInt(part, 10));
+  return { hour: hour ?? 0, minute: minute ?? 0 };
+}
+
+function nextTimeInCampaignWindow(candidate: Date, campaign: Campaign): Date {
+  const allowedWeekdays = new Set(campaign.allowedWeekdays.split(',').map((day) => day.trim()));
+  const start = parseHm(campaign.sendWindowStart);
+  const end = parseHm(campaign.sendWindowEnd);
+  const candidateLocal = DateTime.fromJSDate(candidate, { zone: 'utc' }).setZone(campaign.timezone);
+  let local = candidateLocal.startOf('minute');
+  if (local < candidateLocal) local = local.plus({ minutes: 1 });
+
+  for (let daysChecked = 0; daysChecked < 14; daysChecked += 1) {
+    const weekday = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'][local.weekday - 1];
+    const windowStart = local.set({ hour: start.hour, minute: start.minute, second: 0, millisecond: 0 });
+    const windowEnd = local.set({ hour: end.hour, minute: end.minute, second: 59, millisecond: 999 });
+    if (weekday && allowedWeekdays.has(weekday)) {
+      if (local < windowStart) return windowStart.toUTC().toJSDate();
+      if (local <= windowEnd) return local.toUTC().toJSDate();
+    }
+    local = local.plus({ days: 1 }).startOf('day');
+  }
+
+  return candidate;
+}
+
+async function getUpcomingSendTimes(lastGlobalSendAttemptAt: Date | null) {
+  const actions = await prisma.outreachAction.findMany({
+    where: { status: ActionStatus.PENDING, campaign: { active: true } },
+    include: {
+      campaign: true,
+      contact: { select: { companyName: true } },
+    },
+    orderBy: [{ scheduledFor: 'asc' }, { createdAt: 'asc' }],
+    take: 8,
+  });
+
+  let previousAttempt = lastGlobalSendAttemptAt;
+  const now = new Date();
+  return actions.map((action) => {
+    const gapMs = (action.campaign.minimumSendGapSeconds ?? env.minSendGapSeconds) * 1_000;
+    const afterGap = previousAttempt ? new Date(previousAttempt.getTime() + gapMs) : now;
+    const earliest = new Date(Math.max(action.scheduledFor.getTime(), now.getTime(), afterGap.getTime()));
+    const plannedFor = nextTimeInCampaignWindow(earliest, action.campaign);
+    previousAttempt = plannedFor;
+    return {
+      actionType: action.actionType,
+      companyName: action.contact.companyName,
+      plannedFor,
+    };
+  });
 }
 
 async function getVariantStats(): Promise<
@@ -24,6 +79,7 @@ async function getVariantStats(): Promise<
       FROM sms_messages sm
       JOIN contacts c ON c.id = sm.contact_id
       WHERE sm.direction = 'OUTBOUND'
+        AND sm.status IN ('SENT', 'DELIVERED')
       GROUP BY c.outreach_variant
     `,
   ]);
@@ -50,14 +106,16 @@ export async function registerDashboardRoutes(app: FastifyInstance): Promise<voi
     const runtime = await getRuntimeState();
     const { start, end } = localDayBounds(new Date(), env.appTimezone);
 
-    const [attempted, sent, delivered, failed, stalled, repliesToday, optOutsToday] = await Promise.all([
+    const [attempted, sent, simulated, delivered, failed, stalled, repliesToday, optOutsToday, upcoming] = await Promise.all([
       prisma.smsMessage.count({ where: { direction: 'OUTBOUND', requestedAt: { gte: start, lte: end } } }),
-      prisma.smsMessage.count({ where: { direction: 'OUTBOUND', status: { in: ['SENT', 'DELIVERED', 'DRY_RUN'] }, requestedAt: { gte: start, lte: end } } }),
+      prisma.smsMessage.count({ where: { direction: 'OUTBOUND', status: { in: ['SENT', 'DELIVERED'] }, requestedAt: { gte: start, lte: end } } }),
+      prisma.smsMessage.count({ where: { direction: 'OUTBOUND', status: 'DRY_RUN', requestedAt: { gte: start, lte: end } } }),
       prisma.smsMessage.count({ where: { direction: 'OUTBOUND', status: 'DELIVERED', requestedAt: { gte: start, lte: end } } }),
       prisma.smsMessage.count({ where: { direction: 'OUTBOUND', status: 'FAILED', requestedAt: { gte: start, lte: end } } }),
       prisma.smsMessage.count({ where: { direction: 'OUTBOUND', status: 'STALLED', requestedAt: { gte: start, lte: end } } }),
       prisma.smsMessage.count({ where: { direction: 'INBOUND', receivedAt: { gte: start, lte: end } } }),
       prisma.contact.count({ where: { optedOutAt: { gte: start, lte: end } } }),
+      getUpcomingSendTimes(runtime.lastGlobalSendAttemptAt),
     ]);
 
     const [pendingInitial, pendingFollowup1, pendingFollowup2, pendingFollowup3, pendingFollowup4, pendingFollowup5] = await Promise.all([
@@ -87,7 +145,7 @@ export async function registerDashboardRoutes(app: FastifyInstance): Promise<voi
       dryRun: env.dryRun,
       environment: env.environment,
       textbee: { configured: Boolean(env.textbee.apiKey) },
-      today: { attempted, sent, delivered, failed, stalled, replies: repliesToday, optOuts: optOutsToday },
+      today: { attempted, sent, simulated, delivered, failed, stalled, replies: repliesToday, optOuts: optOutsToday },
       queue: {
         pendingInitial,
         pendingFollowup1,
@@ -96,6 +154,7 @@ export async function registerDashboardRoutes(app: FastifyInstance): Promise<voi
         pendingFollowup4,
         pendingFollowup5,
       },
+      upcoming,
       contacts: { total, ready, active, replied, stopped, completed, failed: sendFailed, pendingActivation },
       variantStats,
     };

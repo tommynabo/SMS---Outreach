@@ -72,10 +72,20 @@ async function loadDashboard() {
   el.textContent = 'Loading...';
   try {
     const d = await api('/dashboard');
+    const todayLabels = {
+      attempted: 'Intentos',
+      sent: 'Enviados reales',
+      simulated: 'Simulados',
+      delivered: 'Entregados',
+      failed: 'Fallidos',
+      stalled: 'Atascados',
+      replies: 'Respuestas',
+      optOuts: 'Bajas',
+    };
     el.innerHTML = `
       <div class="cards">
         <div class="card"><h4>System</h4><div class="value"><span class="badge ${d.systemStatus}">${d.systemStatus}</span></div>${d.pauseReason ? `<div>${escapeHtml(d.pauseReason)}</div>` : ''}</div>
-        <div class="card"><h4>Dry Run</h4><div class="value">${d.dryRun ? 'YES' : 'no'}</div></div>
+        <div class="card ${d.dryRun ? 'warning' : ''}"><h4>Modo simulación</h4><div class="value">${d.dryRun ? 'ACTIVO' : 'Inactivo'}</div></div>
         <div class="card"><h4>TextBee</h4><div class="value">${d.textbee.configured ? 'configured' : 'NOT configured'}</div></div>
       </div>
       ${d.contacts.pendingActivation > 0 ? `
@@ -98,12 +108,19 @@ async function loadDashboard() {
       </div>
       <h3>Hoy</h3>
       <div class="cards">
-        ${Object.entries(d.today).map(([k, v]) => `<div class="card"><h4>${k}</h4><div class="value">${v}</div></div>`).join('')}
+        ${Object.entries(d.today).map(([k, v]) => `<div class="card"><h4>${todayLabels[k] || k}</h4><div class="value">${v}</div></div>`).join('')}
       </div>
       <h3>Cola de envíos</h3>
       <div class="cards">
         ${Object.entries(d.queue).map(([k, v]) => `<div class="card"><h4>${k}</h4><div class="value">${v}</div></div>`).join('')}
       </div>
+      <h3>Próximos envíos estimados</h3>
+      <table>
+        <thead><tr><th>Hora estimada</th><th>Empresa</th><th>Mensaje</th></tr></thead>
+        <tbody>
+          ${d.upcoming.length ? d.upcoming.map((item) => `<tr><td>${new Date(item.plannedFor).toLocaleString()}</td><td>${escapeHtml(item.companyName || '-')}</td><td>${item.actionType}</td></tr>`).join('') : '<tr><td colspan="3">No hay mensajes pendientes</td></tr>'}
+        </tbody>
+      </table>
       <h3>Rendimiento por variante</h3>
       <table>
         <thead><tr><th>Variante</th><th>Contactos</th><th>Mensajes enviados</th><th>Respuestas</th><th>Tasa respuesta</th><th>Opt-outs</th></tr></thead>

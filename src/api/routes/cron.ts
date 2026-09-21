@@ -16,7 +16,9 @@ import { runReconciliationTick, runStalledCheckTick } from '../../worker/reconci
  */
 export async function registerCronRoutes(app: FastifyInstance): Promise<void> {
   async function handleTick(request: FastifyRequest, reply: FastifyReply) {
-    const providedSecret = (request.headers['x-cron-secret'] as string | undefined) ?? (request.query as Record<string, string>)?.secret;
+    const authorization = request.headers.authorization;
+    const bearerSecret = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : undefined;
+    const providedSecret = (request.headers['x-cron-secret'] as string | undefined) ?? bearerSecret ?? (request.query as Record<string, string>)?.secret;
 
     if (!env.cronSecret) {
       logger.warn('CRON_SECRET not configured — rejecting /cron/tick request');

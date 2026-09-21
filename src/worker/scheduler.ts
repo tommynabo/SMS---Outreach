@@ -1,14 +1,16 @@
-import { ActionStatus, ActionType, MessageDirection, MessageSource, Prisma } from '@prisma/client';
+import { ActionStatus, ActionType, MessageDirection, MessageSource, PipelineStage, Prisma } from '@prisma/client';
 import { prisma } from '../db/client';
 import { env, isProduction } from '../config/env';
 import { logger } from '../lib/logger';
 import { isWithinSendWindow, localDayBounds } from '../lib/time';
+import { buildTemplateContext, renderTemplate } from '../lib/render';
 import { textBeeClient, TextBeeApiError } from '../textbee/client';
 import { hasTag, addTag } from '../services/tags';
 import { writeAuditLog } from '../services/auditLog';
 import { notify } from '../services/notifications';
 import { recordApiError, recordSendFailure, recordGlobalSendAttempt } from '../services/circuitBreaker';
 import { onActionConfirmedSent } from '../outreach/sequence';
+import { setPipelineStage } from '../services/pipeline';
 import { NotificationType } from '@prisma/client';
 
 // Any single Postgres integer works; only needs to be a constant, unique to this critical section.
@@ -152,6 +154,34 @@ async function sendLockedAction(candidate: LockedCandidate): Promise<SchedulerTi
   if (!action) return { outcome: 'error', message: 'action disappeared after lock' };
   const contact = action.contact;
 
+  const variant = contact.outreachVariant ?? 'A';
+  const template = await prisma.messageTemplate.findUnique({
+    where: { actionType_variant: { actionType: action.actionType, variant } },
+  });
+  if (!template) {
+    const message = `Missing ${action.actionType} message template for variant ${variant}`;
+    await prisma.outreachAction.update({
+      where: { id: action.id },
+      data: { status: ActionStatus.PENDING, lockedAt: null, errorMessage: message },
+    });
+    return { outcome: 'error', actionId: action.id, message };
+  }
+
+  const renderedMessage = renderTemplate(
+    template.body,
+    buildTemplateContext(contact.customFields, {
+      company_name: contact.companyName,
+      name: contact.name,
+      source_query: contact.sourceQuery,
+      rating: contact.rating,
+      reviews_count: contact.reviewsCount,
+      city: contact.city,
+    }),
+  );
+  if (renderedMessage !== action.renderedMessage) {
+    await prisma.outreachAction.update({ where: { id: action.id }, data: { renderedMessage } });
+  }
+
   await recordGlobalSendAttempt();
   await writeAuditLog('SMS_REQUESTED', { contactId: contact.id, campaignId: action.campaignId, details: { actionId: action.id, actionType: action.actionType } });
 
@@ -176,7 +206,7 @@ async function sendLockedAction(candidate: LockedCandidate): Promise<SchedulerTi
       direction: MessageDirection.OUTBOUND,
       source: MessageSource.SYSTEM,
       phone: contact.phoneE164,
-      body: action.renderedMessage,
+      body: renderedMessage,
       status: 'REQUESTED',
       requestedAt,
     },
@@ -190,7 +220,7 @@ async function sendLockedAction(candidate: LockedCandidate): Promise<SchedulerTi
   }
 
   try {
-    const result = await textBeeClient.sendSms(contact.phoneE164, action.renderedMessage);
+    const result = await textBeeClient.sendSms(contact.phoneE164, renderedMessage);
 
     await prisma.outreachAction.update({
       where: { id: action.id },
@@ -210,6 +240,13 @@ async function sendLockedAction(candidate: LockedCandidate): Promise<SchedulerTi
         textbeeBatchId: result.batchId,
       },
     });
+
+    // TextBee accepted the message and queued it on the configured device. Show
+    // that operational state in Kanban, while follow-ups remain gated on a
+    // later sent/delivered confirmation in onActionConfirmedSent.
+    if (action.actionType === ActionType.INITIAL) {
+      await setPipelineStage(contact.id, action.campaignId, PipelineStage.SMS_ENVIADO);
+    }
 
     await writeAuditLog('SMS_API_ACCEPTED', { contactId: contact.id, campaignId: action.campaignId, details: { actionId: action.id, smsId: result.smsId } });
 

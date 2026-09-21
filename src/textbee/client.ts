@@ -49,6 +49,27 @@ export interface ListMessagesResult {
   nextCursor: string | null;
 }
 
+interface TextBeeListPayload {
+  data?: Array<Record<string, unknown>>;
+  messages?: Array<Record<string, unknown>>;
+  nextCursor?: string | null;
+  meta?: { nextCursor?: string | null };
+}
+
+function identifier(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (!value || typeof value !== 'object') return undefined;
+  const record = value as Record<string, unknown>;
+  const id = record.id ?? record._id;
+  return typeof id === 'string' ? id : undefined;
+}
+
+function normalizeDirection(value: unknown): string | undefined {
+  if (value === 'sent') return 'outbound';
+  if (value === 'received') return 'inbound';
+  return typeof value === 'string' ? value : undefined;
+}
+
 function classifyHttpError(statusCode: number): TextBeeErrorCategory {
   if (statusCode === 400 || statusCode === 422) return 'INVALID_REQUEST';
   if (statusCode === 401 || statusCode === 403) return 'AUTH_ERROR';
@@ -161,9 +182,29 @@ export class TextBeeClient {
       throw new TextBeeApiError(`TextBee list-messages failed with HTTP ${response.status}`, category, response.status, json);
     }
 
-    const payload = json as { data?: TextBeeMessage[]; messages?: TextBeeMessage[]; nextCursor?: string | null } | null;
-    const messages = payload?.data ?? payload?.messages ?? [];
-    const nextCursor = payload?.nextCursor ?? null;
+    const payload = json as TextBeeListPayload | null;
+    const rawMessages = payload?.data ?? payload?.messages ?? [];
+    const messages = rawMessages.flatMap((raw): TextBeeMessage[] => {
+      const id = identifier(raw.id ?? raw._id);
+      if (!id) {
+        logger.warn({ keys: Object.keys(raw) }, 'Ignoring TextBee message without an identifier');
+        return [];
+      }
+
+      return [{
+        ...raw,
+        id,
+        batchId: identifier(raw.batchId ?? raw.smsBatch) ?? null,
+        recipient: typeof raw.recipient === 'string' ? raw.recipient : undefined,
+        sender: typeof raw.sender === 'string' ? raw.sender : undefined,
+        message: typeof raw.message === 'string' ? raw.message : typeof raw.text === 'string' ? raw.text : '',
+        status: typeof raw.status === 'string' ? raw.status : '',
+        direction: normalizeDirection(raw.direction),
+        createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : undefined,
+        updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : undefined,
+      }];
+    });
+    const nextCursor = payload?.meta?.nextCursor ?? payload?.nextCursor ?? null;
 
     return { messages, nextCursor };
   }

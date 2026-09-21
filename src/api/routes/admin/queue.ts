@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { ActionStatus } from '@prisma/client';
+import { ActionStatus, ActionType, PipelineStage } from '@prisma/client';
 import { prisma } from '../../../db/client';
 import { writeAuditLog } from '../../../services/auditLog';
 
@@ -83,5 +83,20 @@ export async function registerQueueRoutes(app: FastifyInstance): Promise<void> {
     await prisma.outreachAction.update({ where: { id: action.id }, data: { scheduledFor } });
     await writeAuditLog('MANUAL_STAGE_CHANGE', { contactId: action.contactId, campaignId: action.campaignId, actor: 'admin', details: { action: 'reschedule', actionId: action.id, scheduledFor } });
     return { ok: true };
+  });
+
+  app.post('/queue/sync-accepted-kanban', async () => {
+    const acceptedInitialActions = await prisma.outreachAction.findMany({
+      where: { status: ActionStatus.API_ACCEPTED, actionType: ActionType.INITIAL },
+      select: { contactId: true, campaignId: true },
+    });
+
+    const updates = await prisma.$transaction(acceptedInitialActions.map((action) => prisma.pipelineEntry.updateMany({
+      where: { contactId: action.contactId, campaignId: action.campaignId },
+      data: { stage: PipelineStage.SMS_ENVIADO },
+    })));
+    const updated = updates.reduce((total, result) => total + result.count, 0);
+    await writeAuditLog('MANUAL_STAGE_CHANGE', { actor: 'admin', details: { action: 'sync-accepted-kanban', updated } });
+    return { ok: true, updated };
   });
 }

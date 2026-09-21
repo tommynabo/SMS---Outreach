@@ -41,8 +41,8 @@ export async function resumeGlobal(actor = 'admin'): Promise<void> {
 export async function recordSendSuccess(): Promise<void> {
   await prisma.campaignRuntimeState.upsert({
     where: { id: RUNTIME_ID },
-    create: { id: RUNTIME_ID, consecutiveFailures: 0, lastGlobalSuccessfulSendAt: new Date() },
-    update: { consecutiveFailures: 0, lastGlobalSuccessfulSendAt: new Date() },
+    create: { id: RUNTIME_ID, consecutiveFailures: 0, consecutiveStalled: 0, lastGlobalSuccessfulSendAt: new Date() },
+    update: { consecutiveFailures: 0, consecutiveStalled: 0, lastGlobalSuccessfulSendAt: new Date() },
   });
 }
 
